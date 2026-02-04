@@ -1,7 +1,9 @@
 import { useState, useCallback, useEffect } from 'react';
 import { SearchBox } from './components/SearchBox';
 import { GifGrid } from './components/GifGrid';
-import { searchGifs, getRandomGifs, TABLES, type GifResult, type TableConfig } from './lib/antfly';
+import { GifDetail } from './components/GifDetail';
+import { AboutModal } from './components/AboutModal';
+import { searchGifs, getRandomGifs, getGifById, TABLES, type GifResult, type TableConfig } from './lib/antfly';
 
 function App() {
   const [gifs, setGifs] = useState<GifResult[]>([]);
@@ -10,6 +12,10 @@ function App() {
   const [lastQuery, setLastQuery] = useState('');
   const [initialLoadDone, setInitialLoadDone] = useState(false);
   const [selectedTable, setSelectedTable] = useState<TableConfig>(TABLES[0]);
+  const [selectedGif, setSelectedGif] = useState<GifResult | null>(null);
+  const [searchKey, setSearchKey] = useState(0);
+  const [showAbout, setShowAbout] = useState(false);
+  const [totalGifs, setTotalGifs] = useState<number | null>(null);
   const [isDark, setIsDark] = useState(() => {
     if (typeof window !== 'undefined') {
       return window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -22,7 +28,20 @@ function App() {
     document.documentElement.classList.toggle('dark', isDark);
   }, [isDark]);
 
-  // Load GIFs when table changes
+  // Sync selectedGif ↔ URL ?gif= param
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (selectedGif) {
+      params.set('gif', selectedGif.id);
+    } else {
+      params.delete('gif');
+    }
+    const qs = params.toString();
+    const newUrl = qs ? `${window.location.pathname}?${qs}` : window.location.pathname;
+    window.history.replaceState(null, '', newUrl);
+  }, [selectedGif]);
+
+  // Load GIFs when table changes, then open deep-linked GIF if any
   useEffect(() => {
     const loadGifs = async () => {
       setIsLoading(true);
@@ -30,8 +49,24 @@ function App() {
       setGifs([]);
       setLastQuery('');
       try {
-        const response = await getRandomGifs(selectedTable.name, 50);
+        const response = await getRandomGifs(selectedTable.name);
         setGifs(response.results);
+        setTotalGifs(response.total);
+
+        // Check for deep-linked GIF in URL
+        const params = new URLSearchParams(window.location.search);
+        const gifId = params.get('gif');
+        if (gifId && !selectedGif) {
+          // Try to find it in loaded results first
+          const found = response.results.find(g => g.id === gifId);
+          if (found) {
+            setSelectedGif(found);
+          } else {
+            // Fetch it directly from Antfly
+            const gif = await getGifById(selectedTable.name, gifId);
+            if (gif) setSelectedGif(gif);
+          }
+        }
       } catch (err) {
         console.error('Failed to load GIFs:', err);
         setError(err instanceof Error ? err.message : 'Failed to connect to Antfly');
@@ -41,7 +76,7 @@ function App() {
       }
     };
     loadGifs();
-  }, [selectedTable]);
+  }, [selectedTable]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSearch = useCallback(async (query: string) => {
     if (query === lastQuery) return;
@@ -60,14 +95,34 @@ function App() {
     }
   }, [lastQuery, selectedTable]);
 
+  const handleClearSearch = useCallback(async () => {
+    setSearchKey(k => k + 1);
+    setLastQuery('');
+    setIsLoading(true);
+    setError(null);
+    try {
+      const response = await getRandomGifs(selectedTable.name);
+      setGifs(response.results);
+      setTotalGifs(response.total);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load GIFs');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [selectedTable]);
+
   return (
     <div className="min-h-screen bg-[hsl(var(--background))]">
       {/* Header */}
       <header className="sticky top-0 z-10 bg-[hsl(var(--background))]/95 backdrop-blur border-b border-[hsl(var(--border))]">
         <div className="max-w-7xl mx-auto px-4 py-4">
           <div className="flex items-center justify-between mb-4">
-            <h1 className="text-2xl font-bold text-[hsl(var(--foreground))]">
-              GIF Picker
+            <h1
+              className="text-2xl font-bold text-[hsl(var(--foreground))] cursor-pointer hover:opacity-80 transition-opacity"
+              onClick={handleClearSearch}
+              title="Clear search"
+            >
+              Honeycomb
             </h1>
             <div className="flex items-center gap-2">
               <select
@@ -129,7 +184,7 @@ function App() {
             </button>
             </div>
           </div>
-          <SearchBox onSearch={handleSearch} isLoading={isLoading} />
+          <SearchBox key={searchKey} onSearch={handleSearch} isLoading={isLoading} />
         </div>
       </header>
 
@@ -174,7 +229,7 @@ go run main.go -tsv /path/to/TGIF-Release/data/tgif-v1.0.tsv -limit 1000`}
                 {gifs.length} results for "{lastQuery}"
               </p>
             )}
-            <GifGrid gifs={gifs} isLoading={isLoading} />
+            <GifGrid gifs={gifs} isLoading={isLoading} onGifClick={setSelectedGif} hasActiveSearch={!!lastQuery} />
           </>
         )}
       </main>
@@ -192,22 +247,28 @@ go run main.go -tsv /path/to/TGIF-Release/data/tgif-v1.0.tsv -limit 1000`}
             >
               Antfly
             </a>
-            {' '}+ CLIP embeddings
+            {totalGifs != null && totalGifs > 0 && (
+              <> &bull; {totalGifs.toLocaleString()} GIFs</>
+            )}
           </p>
           <p className="mt-1">
-            Data from{' '}
-            <a
-              href="https://github.com/raingo/TGIF-Release"
+            <button
+              onClick={() => setShowAbout(true)}
               className="text-[hsl(var(--foreground))] hover:underline"
-              target="_blank"
-              rel="noopener noreferrer"
             >
-              TGIF Dataset
-            </a>
-            {' '}(102,068 GIFs)
+              About Honeycomb
+            </button>
           </p>
         </div>
       </footer>
+
+      {/* Detail overlay */}
+      {selectedGif && (
+        <GifDetail gif={selectedGif} onClose={() => setSelectedGif(null)} hasActiveSearch={!!lastQuery} />
+      )}
+
+      {/* About modal */}
+      {showAbout && <AboutModal onClose={() => setShowAbout(false)} />}
     </div>
   );
 }

@@ -42,15 +42,27 @@ var (
 	dimension   = flag.Int("dimension", 384, "Embedding dimension (384 for bge-small)")
 )
 
-// GIFDescription matches the output of describe_gifs.py
+// GIFDescription matches the output of describe_gifs.py and describe_sources.py
 type GIFDescription struct {
+	ID                  string          `json:"id"`          // Optional: manifest ID (used as doc ID if present)
 	URL                 string          `json:"url"`
+	Attribution         string          `json:"attribution"` // Optional: source page URL for credit
 	OriginalDescription string          `json:"original_description"`
 	Literal             string          `json:"literal"`
+	Source              string          `json:"source"`
 	Mood                string          `json:"mood"`
 	Action              json.RawMessage `json:"action"` // Can be string or []string
 	Context             string          `json:"context"`
 	Tags                []string        `json:"tags"`
+}
+
+// DocID returns the document ID, preferring the manifest ID if present.
+func (g *GIFDescription) DocID() string {
+	if g.ID != "" {
+		return g.ID
+	}
+	hash := md5.Sum([]byte(g.URL))
+	return fmt.Sprintf("gif_%x", hash[:8])
 }
 
 // ActionString returns the action as a string (handles both string and array)
@@ -72,6 +84,7 @@ func (g *GIFDescription) ActionString() string {
 func (g *GIFDescription) CombinedText() string {
 	parts := []string{
 		g.Literal,
+		"Source: " + g.Source,
 		"Mood: " + g.Mood,
 		"Actions: " + g.ActionString(),
 		"Use case: " + g.Context,
@@ -205,20 +218,24 @@ func importGIFs(ctx context.Context, client *antfly.AntflyClient) error {
 		// Create combined text for embedding (Antfly will embed this via the configured Field)
 		text := desc.CombinedText()
 
-		// Generate document ID from URL hash
-		hash := md5.Sum([]byte(desc.URL))
-		docID := fmt.Sprintf("gif_%x", hash[:8])
+		// Generate document ID (prefers manifest ID if present)
+		docID := desc.DocID()
 
-		batch[docID] = map[string]any{
+		doc := map[string]any{
 			"gif_url":              desc.URL,
 			"original_description": desc.OriginalDescription,
 			"literal":              desc.Literal,
+			"source":               desc.Source,
 			"mood":                 desc.Mood,
 			"action":               desc.Action,
 			"context":              desc.Context,
 			"tags":                 desc.Tags,
 			"combined_text":        text,
 		}
+		if desc.Attribution != "" {
+			doc["attribution"] = desc.Attribution
+		}
+		batch[docID] = doc
 
 		// Flush batch
 		if len(batch) >= *batchSize {

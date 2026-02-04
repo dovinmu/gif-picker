@@ -3,9 +3,11 @@ import type { GifResult } from "../lib/antfly";
 
 interface GifCardProps {
   gif: GifResult;
+  onClick?: () => void;
+  hasActiveSearch?: boolean;
 }
 
-export function GifCard({ gif }: GifCardProps) {
+export function GifCard({ gif, onClick, hasActiveSearch }: GifCardProps) {
   const [copied, setCopied] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(false);
@@ -49,7 +51,10 @@ export function GifCard({ gif }: GifCardProps) {
   }
 
   return (
-    <div className="group relative rounded-lg overflow-hidden bg-[hsl(var(--card))] border border-[hsl(var(--border))] hover:border-[hsl(var(--ring))] transition-colors mb-4 break-inside-avoid">
+    <div
+      className="group relative rounded-lg overflow-hidden bg-[hsl(var(--card))] border border-[hsl(var(--border))] hover:border-[hsl(var(--ring))] transition-colors mb-4 break-inside-avoid cursor-pointer"
+      onClick={onClick}
+    >
       {/* Loading skeleton - positioned absolute so image can load underneath */}
       {!loaded && (
         <div className="absolute inset-0 bg-[hsl(var(--muted))] animate-pulse" />
@@ -73,13 +78,13 @@ export function GifCard({ gif }: GifCardProps) {
         {/* Actions */}
         <div className="flex gap-2">
           <button
-            onClick={handleCopy}
+            onClick={(e) => { e.stopPropagation(); handleCopy(); }}
             className="flex-1 px-3 py-2 bg-white/20 hover:bg-white/30 rounded text-white text-sm font-medium transition-colors"
           >
             {copied ? "Copied!" : "Copy URL"}
           </button>
           <button
-            onClick={handleDownload}
+            onClick={(e) => { e.stopPropagation(); handleDownload(); }}
             className="px-3 py-2 bg-white/20 hover:bg-white/30 rounded text-white text-sm font-medium transition-colors"
             title="Download GIF"
           >
@@ -102,10 +107,12 @@ export function GifCard({ gif }: GifCardProps) {
         </div>
       </div>
 
-      {/* Score badge - always visible */}
-      <div className="absolute top-2 left-2 px-2 py-1 bg-black/70 rounded text-white text-xs font-mono">
-        {gif.score.toFixed(3)}
-      </div>
+      {/* Score badge - only during active search */}
+      {hasActiveSearch && (
+        <div className="absolute top-2 left-2 px-2 py-1 bg-black/70 rounded text-white text-xs font-mono">
+          {gif.score.toFixed(3)}
+        </div>
+      )}
     </div>
   );
 }

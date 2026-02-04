@@ -19,7 +19,16 @@ export interface GifResult {
   score: number;
   gif_url: string;
   description: string;
-  tumblr_id: string;
+  tumblr_id?: string;
+  original_description?: string;
+  literal?: string;
+  mood?: string;
+  action?: string | string[];
+  context?: string;
+  source?: string;
+  tags?: string[];
+  attribution?: string;
+  combined_text?: string;
   rank?: number;
 }
 
@@ -59,23 +68,71 @@ async function embedQuery(text: string): Promise<number[]> {
   return embedding;
 }
 
+export async function getGifById(tableName: string, id: string): Promise<GifResult | null> {
+  try {
+    const response = await fetch(`${API_BASE}/tables/${tableName}/docs/${id}`);
+    if (!response.ok) return null;
+    const data = await response.json();
+    const source = data.source ?? data._source ?? data;
+    if (isRemovedGif(source)) return null;
+    return {
+      ...source,
+      id: data.id ?? data._id ?? id,
+      score: 0,
+      gif_url: source.gif_url ?? '',
+      description: source.description ?? source.original_description ?? source.combined_text ?? '',
+    };
+  } catch {
+    return null;
+  }
+}
+
+// Detect GIFs removed by Tumblr (copyright/guideline violations)
+function isRemovedGif(source: Record<string, any>): boolean {
+  const fields = [source.literal, source.description, source.combined_text];
+  return fields.some(f => typeof f === 'string' && f.toLowerCase().includes('content has been removed'));
+}
+
+// Parse query for tag:X prefixes
+function parseQuery(raw: string): { text: string; tags: string[] } {
+  const tags: string[] = [];
+  const text = raw.replace(/tag:(\S+)/g, (_, tag) => {
+    tags.push(tag.toLowerCase());
+    return '';
+  }).trim();
+  return { text, tags };
+}
+
 export async function searchGifs(
   query: string,
   table: TableConfig,
   limit: number = 50,
 ): Promise<SearchResponse> {
   let body: Record<string, unknown>;
+  const { text, tags } = parseQuery(query);
 
   if (table.searchMode === 'semantic') {
-    // Let Antfly's built-in termite embed the query text
-    body = {
-      semantic_search: query,
-      indexes: ['embeddings'],
-      limit,
-    };
+    body = { limit };
+
+    if (text) {
+      // Run both full-text and semantic search, merge with RRF
+      body.full_text_search = { match: text, field: 'combined_text' };
+      body.semantic_search = text;
+      body.indexes = ['embeddings'];
+      body.merge_strategy = 'rrf';
+    }
+
+    // Apply tag filter
+    if (tags.length === 1) {
+      body.filter_query = { term: tags[0], field: 'tags' };
+    } else if (tags.length > 1) {
+      body.filter_query = {
+        conjuncts: tags.map(t => ({ term: t, field: 'tags' })),
+      };
+    }
   } else {
-    // Embed query client-side via fixed termite (CLIP with EOS pooling)
-    const queryVector = await embedQuery(query);
+    // CLIP mode: embed query client-side via fixed termite
+    const queryVector = await embedQuery(text || query);
     body = {
       vector_search: {
         index: 'embeddings',
@@ -112,21 +169,26 @@ export async function searchGifs(
 
   // Transform Antfly response to our format
   const hits = firstResponse?.hits?.hits ?? [];
-  const results: GifResult[] = hits.map((hit: any, index: number) => {
-    // Debug: log first hit structure
-    if (import.meta.env.DEV && index === 0) {
-      console.log('First hit structure:', hit);
-    }
-    const source = hit.source ?? hit._source ?? {};
-    return {
-      id: hit.id ?? hit._id ?? '',
-      score: hit._index_scores?.embeddings ?? hit._score ?? 0,
-      gif_url: source.gif_url ?? '',
-      description: source.description ?? source.original_description ?? source.combined_text ?? '',
-      tumblr_id: source.tumblr_id ?? '',
-      rank: index + 1,
-    };
-  });
+  const results: GifResult[] = hits
+    .filter((hit: any) => {
+      const source = hit.source ?? hit._source ?? {};
+      return !isRemovedGif(source);
+    })
+    .map((hit: any, index: number) => {
+      // Debug: log first hit structure
+      if (import.meta.env.DEV && index === 0) {
+        console.log('First hit structure:', hit);
+      }
+      const source = hit.source ?? hit._source ?? {};
+      return {
+        ...source,
+        id: hit.id ?? hit._id ?? '',
+        score: hit._index_scores?.embeddings ?? hit._score ?? 0,
+        gif_url: source.gif_url ?? '',
+        description: source.description ?? source.original_description ?? source.combined_text ?? '',
+        rank: index + 1,
+      };
+    });
 
   return {
     results,
@@ -134,15 +196,16 @@ export async function searchGifs(
   };
 }
 
-export async function getRandomGifs(tableName: string, limit: number = 50): Promise<SearchResponse> {
-  // Get random GIFs without semantic search (for initial load)
+export async function getRandomGifs(tableName: string, limit: number = 30): Promise<SearchResponse> {
+  // Fetch a larger pool and shuffle client-side for variety on each load
+  const poolSize = Math.max(limit * 5, 200);
   const response = await fetch(`${API_BASE}/tables/${tableName}/query`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      limit,
+      limit: poolSize,
     }),
   });
 
@@ -152,19 +215,30 @@ export async function getRandomGifs(tableName: string, limit: number = 50): Prom
 
   const data = await response.json();
   const hits = data.responses?.[0]?.hits?.hits ?? [];
-  const results: GifResult[] = hits.map((hit: any) => {
-    const source = hit.source ?? hit._source ?? {};
-    return {
-      id: hit._id ?? '',
-      score: hit._score ?? 1,
-      gif_url: source.gif_url ?? '',
-      description: source.description ?? source.original_description ?? source.combined_text ?? '',
-      tumblr_id: source.tumblr_id ?? '',
-    };
-  });
+  const pool: GifResult[] = hits
+    .filter((hit: any) => {
+      const source = hit.source ?? hit._source ?? {};
+      return !isRemovedGif(source);
+    })
+    .map((hit: any) => {
+      const source = hit.source ?? hit._source ?? {};
+      return {
+        ...source,
+        id: hit._id ?? '',
+        score: hit._score ?? 1,
+        gif_url: source.gif_url ?? '',
+        description: source.description ?? source.original_description ?? source.combined_text ?? '',
+      };
+    });
+
+  // Fisher-Yates shuffle
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
 
   return {
-    results,
-    total: data.responses?.[0]?.hits?.total ?? results.length,
+    results: pool.slice(0, limit),
+    total: data.responses?.[0]?.hits?.total ?? pool.length,
   };
 }

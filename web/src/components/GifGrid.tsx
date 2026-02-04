@@ -4,9 +4,11 @@ import { GifCard } from "./GifCard";
 interface GifGridProps {
   gifs: GifResult[];
   isLoading?: boolean;
+  onGifClick?: (gif: GifResult) => void;
+  hasActiveSearch?: boolean;
 }
 
-export function GifGrid({ gifs, isLoading }: GifGridProps) {
+export function GifGrid({ gifs, isLoading, onGifClick, hasActiveSearch }: GifGridProps) {
   if (isLoading && gifs.length === 0) {
     // Loading skeleton - use masonry-style columns
     return (
@@ -33,7 +35,7 @@ export function GifGrid({ gifs, isLoading }: GifGridProps) {
   return (
     <div className="columns-2 sm:columns-3 md:columns-4 lg:columns-5 gap-4">
       {gifs.map((gif, index) => (
-        <GifCard key={gif.id || `gif-${index}`} gif={gif} />
+        <GifCard key={gif.id || `gif-${index}`} gif={gif} onClick={() => onGifClick?.(gif)} hasActiveSearch={hasActiveSearch} />
       ))}
     </div>
   );
