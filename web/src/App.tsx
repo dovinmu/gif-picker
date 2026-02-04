@@ -1,0 +1,215 @@
+import { useState, useCallback, useEffect } from 'react';
+import { SearchBox } from './components/SearchBox';
+import { GifGrid } from './components/GifGrid';
+import { searchGifs, getRandomGifs, TABLES, type GifResult, type TableConfig } from './lib/antfly';
+
+function App() {
+  const [gifs, setGifs] = useState<GifResult[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [lastQuery, setLastQuery] = useState('');
+  const [initialLoadDone, setInitialLoadDone] = useState(false);
+  const [selectedTable, setSelectedTable] = useState<TableConfig>(TABLES[0]);
+  const [isDark, setIsDark] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    }
+    return false;
+  });
+
+  // Toggle dark mode
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', isDark);
+  }, [isDark]);
+
+  // Load GIFs when table changes
+  useEffect(() => {
+    const loadGifs = async () => {
+      setIsLoading(true);
+      setError(null);
+      setGifs([]);
+      setLastQuery('');
+      try {
+        const response = await getRandomGifs(selectedTable.name, 50);
+        setGifs(response.results);
+      } catch (err) {
+        console.error('Failed to load GIFs:', err);
+        setError(err instanceof Error ? err.message : 'Failed to connect to Antfly');
+      } finally {
+        setIsLoading(false);
+        setInitialLoadDone(true);
+      }
+    };
+    loadGifs();
+  }, [selectedTable]);
+
+  const handleSearch = useCallback(async (query: string) => {
+    if (query === lastQuery) return;
+    setLastQuery(query);
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const response = await searchGifs(query, selectedTable, 20);
+      setGifs(response.results);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Search failed');
+      console.error('Search error:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [lastQuery, selectedTable]);
+
+  return (
+    <div className="min-h-screen bg-[hsl(var(--background))]">
+      {/* Header */}
+      <header className="sticky top-0 z-10 bg-[hsl(var(--background))]/95 backdrop-blur border-b border-[hsl(var(--border))]">
+        <div className="max-w-7xl mx-auto px-4 py-4">
+          <div className="flex items-center justify-between mb-4">
+            <h1 className="text-2xl font-bold text-[hsl(var(--foreground))]">
+              GIF Picker
+            </h1>
+            <div className="flex items-center gap-2">
+              <select
+                value={selectedTable.name}
+                onChange={(e) => {
+                  const table = TABLES.find((t) => t.name === e.target.value);
+                  if (table) setSelectedTable(table);
+                }}
+                className="px-3 py-1.5 rounded-lg text-sm bg-[hsl(var(--muted))] text-[hsl(var(--foreground))] border border-[hsl(var(--border))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+              >
+                {TABLES.map((table) => (
+                  <option key={table.name} value={table.name}>
+                    {table.label}
+                  </option>
+                ))}
+              </select>
+            <button
+              onClick={() => setIsDark(!isDark)}
+              className="p-2 rounded-lg hover:bg-[hsl(var(--muted))] transition-colors"
+              title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {isDark ? (
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <circle cx="12" cy="12" r="5" />
+                  <line x1="12" y1="1" x2="12" y2="3" />
+                  <line x1="12" y1="21" x2="12" y2="23" />
+                  <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+                  <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+                  <line x1="1" y1="12" x2="3" y2="12" />
+                  <line x1="21" y1="12" x2="23" y2="12" />
+                  <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+                  <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+                </svg>
+              ) : (
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+                </svg>
+              )}
+            </button>
+            </div>
+          </div>
+          <SearchBox onSearch={handleSearch} isLoading={isLoading} />
+        </div>
+      </header>
+
+      {/* Main content */}
+      <main className="max-w-7xl mx-auto px-4 py-6">
+        {error ? (
+          <div className="text-center py-12">
+            <p className="text-red-500 mb-2">{error}</p>
+            <p className="text-[hsl(var(--muted-foreground))] text-sm">
+              Make sure Antfly is running: <code className="bg-[hsl(var(--muted))] px-2 py-1 rounded">antfly swarm</code>
+            </p>
+          </div>
+        ) : initialLoadDone && gifs.length === 0 && !lastQuery ? (
+          <div className="text-center py-12">
+            <h2 className="text-xl font-semibold text-[hsl(var(--foreground))] mb-4">
+              No GIFs loaded yet
+            </h2>
+            <p className="text-[hsl(var(--muted-foreground))] mb-4">
+              You need to import the TGIF dataset first:
+            </p>
+            <div className="bg-[hsl(var(--muted))] rounded-lg p-4 max-w-xl mx-auto text-left">
+              <pre className="text-sm overflow-x-auto">
+{`# 1. Make sure Antfly is running
+antfly swarm
+
+# 2. Import the dataset (from gif-picker/ingest)
+cd ingest
+go run main.go -tsv /path/to/TGIF-Release/data/tgif-v1.0.tsv
+
+# For a quick test, limit to 1000 GIFs:
+go run main.go -tsv /path/to/TGIF-Release/data/tgif-v1.0.tsv -limit 1000`}
+              </pre>
+            </div>
+            <p className="text-[hsl(var(--muted-foreground))] mt-4 text-sm">
+              Check the browser console for debugging info.
+            </p>
+          </div>
+        ) : (
+          <>
+            {lastQuery && (
+              <p className="text-[hsl(var(--muted-foreground))] mb-4">
+                {gifs.length} results for "{lastQuery}"
+              </p>
+            )}
+            <GifGrid gifs={gifs} isLoading={isLoading} />
+          </>
+        )}
+      </main>
+
+      {/* Footer */}
+      <footer className="border-t border-[hsl(var(--border))] mt-12">
+        <div className="max-w-7xl mx-auto px-4 py-6 text-center text-[hsl(var(--muted-foreground))] text-sm">
+          <p>
+            Powered by{' '}
+            <a
+              href="https://antfly.io"
+              className="text-[hsl(var(--foreground))] hover:underline"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Antfly
+            </a>
+            {' '}+ CLIP embeddings
+          </p>
+          <p className="mt-1">
+            Data from{' '}
+            <a
+              href="https://github.com/raingo/TGIF-Release"
+              className="text-[hsl(var(--foreground))] hover:underline"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              TGIF Dataset
+            </a>
+            {' '}(102,068 GIFs)
+          </p>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+export default App;
