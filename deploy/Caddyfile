@@ -1,27 +1,25 @@
 # Replace with your domain (or use :80 for HTTP-only testing)
 honeycomb.example.com {
-    # Serve static frontend
-    root * /var/www/honeycomb
-    file_server
-
-    # SPA fallback - serve index.html for client-side routing
-    try_files {path} /index.html
-
-    # Proxy API requests to Antfly
+    # Proxy API requests to Antfly (must be before file_server)
     handle /api/* {
         reverse_proxy localhost:8080
     }
 
-    # Proxy termite requests (strip /termite prefix)
+    # Proxy termite requests (strip prefix)
     handle /termite/* {
         uri strip_prefix /termite
         reverse_proxy localhost:11434
     }
 
-    # Compression
+    # Static frontend (catch-all)
+    handle {
+        root * /var/www/honeycomb
+        try_files {path} /index.html
+        file_server
+    }
+
     encode gzip
 
-    # Security headers
     header {
         X-Content-Type-Options nosniff
         X-Frame-Options DENY
