@@ -3,6 +3,9 @@
 const API_BASE = '/api/v1';
 const TERMITE_BASE = '/termite'; // Proxied to fixed termite (localhost:11434)
 
+// Tags that are globally blocked - GIFs with these tags are hidden from all users
+const BLOCKED_TAGS = new Set(['porn']);
+
 export interface TableConfig {
   name: string;
   label: string;
@@ -94,6 +97,13 @@ function isRemovedGif(source: Record<string, any>): boolean {
   return fields.some(f => typeof f === 'string' && f.toLowerCase().includes('content has been removed'));
 }
 
+// Check if GIF has any blocked tags
+function hasBlockedTag(source: Record<string, any>): boolean {
+  const tags = source.tags;
+  if (!Array.isArray(tags)) return false;
+  return tags.some(tag => typeof tag === 'string' && BLOCKED_TAGS.has(tag.toLowerCase()));
+}
+
 // Google-style query parsing: "quoted phrases", tag:X, -tag:X, and loose terms
 interface ParsedQuery {
   phrases: string[];    // "quoted phrases" → match_phrase
@@ -153,10 +163,16 @@ function buildFullTextSearch(phrases: string[], looseText: string): Record<strin
   return { conjuncts: parts };
 }
 
-// Build exclusion_query from negative tags and excluded attributions
+// Build exclusion_query from negative tags, blocked tags, and excluded attributions
 function buildExclusionQuery(negativeTags: string[], excludedAttributions?: Set<string>): Record<string, unknown> | undefined {
   const parts: string[] = [];
 
+  // Add globally blocked tags
+  for (const tag of BLOCKED_TAGS) {
+    parts.push(`tags:"${tag}"`);
+  }
+
+  // Add user's negative tags
   for (const tag of negativeTags) {
     // Quote values to handle multi-word tags like "Live Leak"
     parts.push(`tags:"${tag}"`);
@@ -266,7 +282,7 @@ export async function searchGifs(
   const results: GifResult[] = hits
     .filter((hit: any) => {
       const source = hit.source ?? hit._source ?? {};
-      return !isRemovedGif(source);
+      return !isRemovedGif(source) && !hasBlockedTag(source);
     })
     .map((hit: any, index: number) => {
       // Debug: log first hit structure
@@ -341,7 +357,7 @@ export async function getRandomGifs(tableName: string, limit: number = 30, exclu
       if (seen.has(id)) continue;
       seen.add(id);
       const source = hit.source ?? hit._source ?? {};
-      if (isRemovedGif(source)) continue;
+      if (isRemovedGif(source) || hasBlockedTag(source)) continue;
       pool.push({
         ...source,
         id,
