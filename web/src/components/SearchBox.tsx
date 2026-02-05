@@ -3,10 +3,11 @@ import { useState, useCallback, useEffect } from 'react';
 interface SearchBoxProps {
   onSearch: (query: string) => void;
   isLoading?: boolean;
+  initialValue?: string;
 }
 
-export function SearchBox({ onSearch, isLoading }: SearchBoxProps) {
-  const [query, setQuery] = useState('');
+export function SearchBox({ onSearch, isLoading, initialValue = '' }: SearchBoxProps) {
+  const [query, setQuery] = useState(initialValue);
   const [debouncedQuery, setDebouncedQuery] = useState('');
 
   // Debounce the query

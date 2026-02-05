@@ -91,6 +91,7 @@ ingest-small:
 # --- Text-Only Pipeline ---
 DESCRIPTIONS_JSONL ?= gif_descriptions.jsonl
 INGEST_TEXT_TABLE ?= tgif_gifs_text
+TGIF_ATTRIBUTION ?= TGIF dataset
 
 # Generate descriptions via Gemini (resumable)
 #   make describe              - all GIFs
@@ -149,7 +150,8 @@ ingest-text-only:
 		-url "$(ANTFLY_URL)" \
 		-jsonl "../$(DESCRIPTIONS_JSONL)" \
 		-table "$(INGEST_TEXT_TABLE)" \
-		-batch $(INGEST_BATCH_SIZE)
+		-batch $(INGEST_BATCH_SIZE) \
+		-attribution "$(TGIF_ATTRIBUTION)"
 
 # Small test batch (100 descriptions)
 ingest-text-only-small:
@@ -163,6 +165,7 @@ ingest-text-only-small:
 		-jsonl "../$(DESCRIPTIONS_JSONL)" \
 		-table "$(INGEST_TEXT_TABLE)" \
 		-batch $(INGEST_BATCH_SIZE) \
+		-attribution "$(TGIF_ATTRIBUTION)" \
 		-limit 100
 
 # --- Fixed CLIP Pipeline ---

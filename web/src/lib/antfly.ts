@@ -93,46 +93,139 @@ function isRemovedGif(source: Record<string, any>): boolean {
   return fields.some(f => typeof f === 'string' && f.toLowerCase().includes('content has been removed'));
 }
 
-// Parse query for tag:X prefixes
-function parseQuery(raw: string): { text: string; tags: string[] } {
+// Google-style query parsing: "quoted phrases", tag:X, -tag:X, and loose terms
+interface ParsedQuery {
+  phrases: string[];    // "quoted phrases" → match_phrase
+  looseText: string;    // unquoted terms → match + semantic
+  tags: string[];
+  negativeTags: string[];
+}
+
+function parseQuery(raw: string): ParsedQuery {
   const tags: string[] = [];
-  const text = raw.replace(/tag:(\S+)/g, (_, tag) => {
-    tags.push(tag.toLowerCase());
+  const negativeTags: string[] = [];
+  const phrases: string[] = [];
+
+  // Strip -tag:"quoted" and -tag:word first
+  let remaining = raw
+    .replace(/-tag:"([^"]+)"/g, (_, tag) => {
+      negativeTags.push(tag.toLowerCase());
+      return '';
+    })
+    .replace(/-tag:(\S+)/g, (_, tag) => {
+      negativeTags.push(tag.toLowerCase());
+      return '';
+    })
+    // Then tag:"quoted" and tag:word
+    .replace(/tag:"([^"]+)"/g, (_, tag) => {
+      tags.push(tag.toLowerCase());
+      return '';
+    })
+    .replace(/tag:(\S+)/g, (_, tag) => {
+      tags.push(tag.toLowerCase());
+      return '';
+    });
+
+  // Extract "quoted phrases"
+  remaining = remaining.replace(/"([^"]+)"/g, (_, phrase) => {
+    phrases.push(phrase.trim());
     return '';
-  }).trim();
-  return { text, tags };
+  });
+
+  const looseText = remaining.trim();
+  return { phrases, looseText, tags, negativeTags };
+}
+
+// Build the full_text_search value from parsed query components
+function buildFullTextSearch(phrases: string[], looseText: string): Record<string, unknown> | undefined {
+  const parts: Record<string, unknown>[] = [];
+
+  for (const phrase of phrases) {
+    parts.push({ match_phrase: phrase, field: 'combined_text' });
+  }
+  if (looseText) {
+    parts.push({ match: looseText, field: 'combined_text' });
+  }
+
+  if (parts.length === 0) return undefined;
+  if (parts.length === 1) return parts[0];
+  return { conjuncts: parts };
+}
+
+// Build exclusion_query from negative tags and excluded attributions
+function buildExclusionQuery(negativeTags: string[], excludedAttributions?: Set<string>): Record<string, unknown> | undefined {
+  const parts: string[] = [];
+
+  for (const tag of negativeTags) {
+    // Quote values to handle multi-word tags like "Live Leak"
+    parts.push(`tags:"${tag}"`);
+  }
+  if (excludedAttributions) {
+    for (const attr of excludedAttributions) {
+      parts.push(`attribution:"${attr}"`);
+    }
+  }
+
+  if (parts.length === 0) return undefined;
+  return { query: parts.join(' OR ') };
 }
 
 export async function searchGifs(
   query: string,
   table: TableConfig,
   limit: number = 50,
+  excludedAttributions?: Set<string>,
 ): Promise<SearchResponse> {
   let body: Record<string, unknown>;
-  const { text, tags } = parseQuery(query);
+  const { phrases, looseText, tags, negativeTags } = parseQuery(query);
 
   if (table.searchMode === 'semantic') {
     body = { limit };
 
-    if (text) {
-      // Run both full-text and semantic search, merge with RRF
-      body.full_text_search = { match: text, field: 'combined_text' };
-      body.semantic_search = text;
-      body.indexes = ['embeddings'];
-      body.merge_strategy = 'rrf';
+    const fts = buildFullTextSearch(phrases, looseText);
+    const hasTextSearch = !!(fts || looseText);
+
+    if (fts) {
+      body.full_text_search = fts;
     }
 
-    // Apply tag filter
-    if (tags.length === 1) {
-      body.filter_query = { term: tags[0], field: 'tags' };
-    } else if (tags.length > 1) {
-      body.filter_query = {
-        conjuncts: tags.map(t => ({ term: t, field: 'tags' })),
-      };
+    // Only include semantic search when there are unquoted terms
+    if (looseText) {
+      body.semantic_search = looseText;
+      body.indexes = ['embeddings'];
+      if (fts) {
+        body.merge_strategy = 'rrf';
+      }
+    }
+
+    // Apply positive tag filter
+    // Use match_phrase for multi-word tags (Bleve tokenizes "Live Leak" into ["live","leak"],
+    // so term:"live leak" won't match — match_phrase finds adjacent tokens in order)
+    if (tags.length > 0) {
+      const tagQueries = tags.map(t =>
+        t.includes(' ')
+          ? { match_phrase: t, field: 'tags' }
+          : { term: t, field: 'tags' }
+      );
+      const tagQuery = tagQueries.length === 1 ? tagQueries[0] : { conjuncts: tagQueries };
+
+      if (hasTextSearch) {
+        // Tags as a filter on top of text/semantic search
+        body.filter_query = tagQuery;
+      } else {
+        // Tag-only: use as the primary full-text search (no semantic)
+        body.full_text_search = tagQuery;
+      }
+    }
+
+    // Apply negative tags + attribution exclusions
+    const exclusion = buildExclusionQuery(negativeTags, excludedAttributions);
+    if (exclusion) {
+      body.exclusion_query = exclusion;
     }
   } else {
     // CLIP mode: embed query client-side via fixed termite
-    const queryVector = await embedQuery(text || query);
+    const queryVector = await embedQuery(looseText || [...phrases, query].join(' '));
     body = {
       vector_search: {
         index: 'embeddings',
@@ -196,40 +289,67 @@ export async function searchGifs(
   };
 }
 
-export async function getRandomGifs(tableName: string, limit: number = 30): Promise<SearchResponse> {
-  // Fetch a larger pool and shuffle client-side for variety on each load
-  const poolSize = Math.max(limit * 5, 200);
-  const response = await fetch(`${API_BASE}/tables/${tableName}/query`, {
+export async function getRandomGifs(tableName: string, limit: number = 30, excludedAttributions?: Set<string>): Promise<SearchResponse> {
+  // Antfly returns docs in insertion order, so a single query from offset 0
+  // only gets the most recently ingested source. Instead, fire parallel small
+  // queries at random offsets, merge & dedupe, then shuffle.
+  const exclusion = buildExclusionQuery([], excludedAttributions);
+
+  // First, get total count with a cheap limit=0 query
+  const countBody: Record<string, unknown> = { limit: 0 };
+  if (exclusion) countBody.exclusion_query = exclusion;
+
+  const countResp = await fetch(`${API_BASE}/tables/${tableName}/query`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      limit: poolSize,
-    }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(countBody),
+  });
+  if (!countResp.ok) throw new Error(`Failed to load GIFs: ${countResp.statusText}`);
+  const countData = await countResp.json();
+  const total = countData.responses?.[0]?.hits?.total ?? 0;
+  if (total === 0) return { results: [], total: 0 };
+
+  // Pick a few random offsets and fetch small batches in parallel
+  const batchSize = Math.min(limit * 2, total);
+  const numBatches = Math.min(5, Math.ceil(total / batchSize));
+  const offsets = Array.from({ length: numBatches }, () =>
+    Math.floor(Math.random() * Math.max(1, total - batchSize))
+  );
+
+  const fetches = offsets.map(async (offset) => {
+    const body: Record<string, unknown> = { limit: batchSize, offset };
+    if (exclusion) body.exclusion_query = exclusion;
+    const resp = await fetch(`${API_BASE}/tables/${tableName}/query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) return [];
+    const data = await resp.json();
+    return data.responses?.[0]?.hits?.hits ?? [];
   });
 
-  if (!response.ok) {
-    throw new Error(`Failed to load GIFs: ${response.statusText}`);
-  }
+  const batches = await Promise.all(fetches);
 
-  const data = await response.json();
-  const hits = data.responses?.[0]?.hits?.hits ?? [];
-  const pool: GifResult[] = hits
-    .filter((hit: any) => {
+  // Merge & dedupe
+  const seen = new Set<string>();
+  const pool: GifResult[] = [];
+  for (const hits of batches) {
+    for (const hit of hits) {
+      const id = hit._id ?? '';
+      if (seen.has(id)) continue;
+      seen.add(id);
       const source = hit.source ?? hit._source ?? {};
-      return !isRemovedGif(source);
-    })
-    .map((hit: any) => {
-      const source = hit.source ?? hit._source ?? {};
-      return {
+      if (isRemovedGif(source)) continue;
+      pool.push({
         ...source,
-        id: hit._id ?? '',
+        id,
         score: hit._score ?? 1,
         gif_url: source.gif_url ?? '',
         description: source.description ?? source.original_description ?? source.combined_text ?? '',
-      };
-    });
+      });
+    }
+  }
 
   // Fisher-Yates shuffle
   for (let i = pool.length - 1; i > 0; i--) {
@@ -239,6 +359,30 @@ export async function getRandomGifs(tableName: string, limit: number = 30): Prom
 
   return {
     results: pool.slice(0, limit),
-    total: data.responses?.[0]?.hits?.total ?? pool.length,
+    total,
   };
+}
+
+export interface AttributionBucket {
+  key: string;
+  count: number;
+}
+
+export async function getAttributions(tableName: string): Promise<AttributionBucket[]> {
+  const response = await fetch(`${API_BASE}/tables/${tableName}/query`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      limit: 0,
+      aggregations: {
+        attributions: { type: 'terms', field: 'attribution', size: 50 },
+      },
+    }),
+  });
+
+  if (!response.ok) return [];
+
+  const data = await response.json();
+  const buckets = data.responses?.[0]?.aggregations?.attributions?.buckets ?? [];
+  return buckets.map((b: any) => ({ key: b.key as string, count: b.doc_count as number }));
 }

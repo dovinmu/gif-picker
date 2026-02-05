@@ -40,6 +40,7 @@ var (
 	skipCreate  = flag.Bool("skip-create", false, "Skip table creation")
 	embedModel  = flag.String("embed-model", "BAAI/bge-small-en-v1.5", "Text embedding model")
 	dimension   = flag.Int("dimension", 384, "Embedding dimension (384 for bge-small)")
+	attribution = flag.String("attribution", "", "Default attribution for docs missing one (e.g., 'TGIF dataset')")
 )
 
 // GIFDescription matches the output of describe_gifs.py and describe_sources.py
@@ -234,6 +235,8 @@ func importGIFs(ctx context.Context, client *antfly.AntflyClient) error {
 		}
 		if desc.Attribution != "" {
 			doc["attribution"] = desc.Attribution
+		} else if *attribution != "" {
+			doc["attribution"] = *attribution
 		}
 		batch[docID] = doc
 

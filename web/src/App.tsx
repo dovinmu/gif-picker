@@ -3,6 +3,7 @@ import { SearchBox } from './components/SearchBox';
 import { GifGrid } from './components/GifGrid';
 import { GifDetail } from './components/GifDetail';
 import { AboutModal } from './components/AboutModal';
+import { FilterOverlay } from './components/FilterOverlay';
 import { searchGifs, getRandomGifs, getGifById, TABLES, type GifResult, type TableConfig } from './lib/antfly';
 
 function App() {
@@ -16,6 +17,8 @@ function App() {
   const [searchKey, setSearchKey] = useState(0);
   const [showAbout, setShowAbout] = useState(false);
   const [totalGifs, setTotalGifs] = useState<number | null>(null);
+  const [searchInput, setSearchInput] = useState('');
+  const [excludedAttributions, setExcludedAttributions] = useState<Set<string>>(new Set());
   const [isDark, setIsDark] = useState(() => {
     if (typeof window !== 'undefined') {
       return window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -81,11 +84,13 @@ function App() {
   const handleSearch = useCallback(async (query: string) => {
     if (query === lastQuery) return;
     setLastQuery(query);
+    setSearchInput(query);
     setIsLoading(true);
     setError(null);
 
     try {
-      const response = await searchGifs(query, selectedTable, 20);
+      const excluded = excludedAttributions.size > 0 ? excludedAttributions : undefined;
+      const response = await searchGifs(query, selectedTable, 20, excluded);
       setGifs(response.results);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Search failed');
@@ -93,15 +98,17 @@ function App() {
     } finally {
       setIsLoading(false);
     }
-  }, [lastQuery, selectedTable]);
+  }, [lastQuery, selectedTable, excludedAttributions]);
 
   const handleClearSearch = useCallback(async () => {
     setSearchKey(k => k + 1);
     setLastQuery('');
+    setSearchInput('');
     setIsLoading(true);
     setError(null);
     try {
-      const response = await getRandomGifs(selectedTable.name);
+      const excluded = excludedAttributions.size > 0 ? excludedAttributions : undefined;
+      const response = await getRandomGifs(selectedTable.name, 30, excluded);
       setGifs(response.results);
       setTotalGifs(response.total);
     } catch (err) {
@@ -109,7 +116,51 @@ function App() {
     } finally {
       setIsLoading(false);
     }
-  }, [selectedTable]);
+  }, [selectedTable, excludedAttributions]);
+
+  // Handle tag click from GifDetail: append tag: prefix and search
+  const handleTagClick = useCallback(async (tag: string) => {
+    const tagExpr = tag.includes(' ') ? `tag:"${tag}"` : `tag:${tag}`;
+    const newQuery = (searchInput ? searchInput + ' ' : '') + tagExpr;
+    setSearchInput(newQuery);
+    setSelectedGif(null); // close detail
+    setSearchKey(k => k + 1); // force SearchBox remount with new value
+    setLastQuery(''); // reset so handleSearch doesn't skip
+    setIsLoading(true);
+    setError(null);
+    try {
+      const excluded = excludedAttributions.size > 0 ? excludedAttributions : undefined;
+      const response = await searchGifs(newQuery, selectedTable, 20, excluded);
+      setGifs(response.results);
+      setLastQuery(newQuery);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Search failed');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [searchInput, selectedTable, excludedAttributions]);
+
+  // Handle attribution filter changes: re-run current query or random load
+  const handleFilterChange = useCallback(async (excluded: Set<string>) => {
+    setExcludedAttributions(excluded);
+    setIsLoading(true);
+    setError(null);
+    const excl = excluded.size > 0 ? excluded : undefined;
+    try {
+      if (lastQuery) {
+        const response = await searchGifs(lastQuery, selectedTable, 20, excl);
+        setGifs(response.results);
+      } else {
+        const response = await getRandomGifs(selectedTable.name, 30, excl);
+        setGifs(response.results);
+        setTotalGifs(response.total);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Filter failed');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [lastQuery, selectedTable]);
 
   return (
     <div className="min-h-screen bg-[hsl(var(--background))]">
@@ -139,6 +190,11 @@ function App() {
                   </option>
                 ))}
               </select>
+            <FilterOverlay
+              tableName={selectedTable.name}
+              excludedAttributions={excludedAttributions}
+              onFilterChange={handleFilterChange}
+            />
             <button
               onClick={() => setIsDark(!isDark)}
               className="p-2 rounded-lg hover:bg-[hsl(var(--muted))] transition-colors"
@@ -184,7 +240,7 @@ function App() {
             </button>
             </div>
           </div>
-          <SearchBox key={searchKey} onSearch={handleSearch} isLoading={isLoading} />
+          <SearchBox key={searchKey} onSearch={handleSearch} isLoading={isLoading} initialValue={searchInput} />
         </div>
       </header>
 
@@ -264,7 +320,7 @@ go run main.go -tsv /path/to/TGIF-Release/data/tgif-v1.0.tsv -limit 1000`}
 
       {/* Detail overlay */}
       {selectedGif && (
-        <GifDetail gif={selectedGif} onClose={() => setSelectedGif(null)} hasActiveSearch={!!lastQuery} />
+        <GifDetail gif={selectedGif} onClose={() => setSelectedGif(null)} hasActiveSearch={!!lastQuery} onTagClick={handleTagClick} />
       )}
 
       {/* About modal */}

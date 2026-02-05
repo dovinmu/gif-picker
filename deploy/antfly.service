@@ -1,0 +1,21 @@
+[Unit]
+Description=Antfly vector database
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu
+ExecStart=~/antfly/antfly swarm --config ~/antfly/config.yaml 2&>1 | tee ~/antfly/antfly.log
+Restart=on-failure
+RestartSec=5
+
+# Environment
+Environment=HOME=/home/ubuntu
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

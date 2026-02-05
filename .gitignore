@@ -1,0 +1,8 @@
+# Downloaded media (can be re-scraped)
+sources/*/media/
+
+# Descriptions can be regenerated
+sources/*/descriptions.jsonl
+
+# Manifests track state - keep these if you want
+# sources/*/manifest.json
