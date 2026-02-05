@@ -7,6 +7,6 @@ default_shards_per_table: 2
 
 termite:
   api_url: http://localhost:11433
-  models_dir: /home/rowan/.termite/models
+  models_dir: /home/ubuntu/.termite/models
   preload:
     - BAAI/bge-small-en-v1.5
