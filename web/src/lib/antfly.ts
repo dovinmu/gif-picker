@@ -30,6 +30,7 @@ export interface GifResult {
   attribution?: string;
   combined_text?: string;
   rank?: number;
+  [key: string]: unknown; // allow arbitrary extra fields from API
 }
 
 export interface SearchResponse {

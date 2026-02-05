@@ -4,10 +4,10 @@ import userEvent from '@testing-library/user-event';
 import { SearchBox } from './SearchBox';
 
 describe('SearchBox', () => {
-  let onSearch: ReturnType<typeof vi.fn>;
+  let onSearch: ReturnType<typeof vi.fn<(query: string) => void>>;
 
   beforeEach(() => {
-    onSearch = vi.fn();
+    onSearch = vi.fn<(query: string) => void>();
     vi.useFakeTimers();
   });
 

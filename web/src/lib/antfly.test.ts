@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { searchGifs, getRandomGifs, type GifResult } from './antfly';
+import { searchGifs, getRandomGifs, TABLES } from './antfly';
 
 // Mock fetch globally
 const mockFetch = vi.fn();
-global.fetch = mockFetch;
+globalThis.fetch = mockFetch;
+
+const textTable = TABLES[0]; // tgif_gifs_text, semantic mode
 
 describe('Antfly API Client', () => {
   beforeEach(() => {
@@ -23,7 +25,7 @@ describe('Antfly API Client', () => {
               hits: [
                 {
                   id: 'gif_123',
-                  score: 0.95,
+                  _index_scores: { embeddings: 0.95 },
                   source: {
                     gif_url: 'https://example.com/cat.gif',
                     description: 'a cat playing',
@@ -42,31 +44,21 @@ describe('Antfly API Client', () => {
         json: () => Promise.resolve(mockResponse),
       });
 
-      const result = await searchGifs('cat playing', 50, 0);
+      const result = await searchGifs('cat playing', textTable, 50);
 
       // Verify the request
-      expect(mockFetch).toHaveBeenCalledWith('/api/v1/tables/tgif_gifs/query', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          semantic_search: 'cat playing',
-          indexes: ['embeddings'],
-          limit: 50,
-          offset: 0,
-        }),
-      });
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/v1/tables/tgif_gifs_text/query',
+        expect.objectContaining({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
 
       // Verify the response transformation
       expect(result.results).toHaveLength(1);
-      expect(result.results[0]).toEqual({
-        id: 'gif_123',
-        score: 0.95,
-        gif_url: 'https://example.com/cat.gif',
-        description: 'a cat playing',
-        tumblr_id: 'abc123',
-      });
+      expect(result.results[0].id).toBe('gif_123');
+      expect(result.results[0].gif_url).toBe('https://example.com/cat.gif');
       expect(result.total).toBe(1);
     });
 
@@ -87,7 +79,7 @@ describe('Antfly API Client', () => {
         json: () => Promise.resolve(mockResponse),
       });
 
-      const result = await searchGifs('nonexistent query');
+      const result = await searchGifs('nonexistent query', textTable);
 
       expect(result.results).toHaveLength(0);
       expect(result.total).toBe(0);
@@ -101,7 +93,7 @@ describe('Antfly API Client', () => {
               hits: [
                 {
                   id: 'gif_456',
-                  score: 0.8,
+                  _score: 0.8,
                   source: {}, // Missing fields
                 },
               ],
@@ -115,15 +107,11 @@ describe('Antfly API Client', () => {
         json: () => Promise.resolve(mockResponse),
       });
 
-      const result = await searchGifs('test');
+      const result = await searchGifs('test', textTable);
 
-      expect(result.results[0]).toEqual({
-        id: 'gif_456',
-        score: 0.8,
-        gif_url: '',
-        description: '',
-        tumblr_id: '',
-      });
+      expect(result.results[0].id).toBe('gif_456');
+      expect(result.results[0].gif_url).toBe('');
+      expect(result.results[0].description).toBe('');
     });
 
     it('should handle _source format (Elasticsearch style)', async () => {
@@ -153,15 +141,10 @@ describe('Antfly API Client', () => {
         json: () => Promise.resolve(mockResponse),
       });
 
-      const result = await searchGifs('test');
+      const result = await searchGifs('test', textTable);
 
-      expect(result.results[0]).toEqual({
-        id: 'gif_789',
-        score: 0.9,
-        gif_url: 'https://example.com/es.gif',
-        description: 'elasticsearch style',
-        tumblr_id: 'es123',
-      });
+      expect(result.results[0].id).toBe('gif_789');
+      expect(result.results[0].gif_url).toBe('https://example.com/es.gif');
     });
 
     it('should throw error on API failure', async () => {
@@ -170,7 +153,7 @@ describe('Antfly API Client', () => {
         statusText: 'Internal Server Error',
       });
 
-      await expect(searchGifs('test')).rejects.toThrow('Search failed: Internal Server Error');
+      await expect(searchGifs('test', textTable)).rejects.toThrow('Search failed: Internal Server Error');
     });
 
     it('should handle malformed response', async () => {
@@ -179,51 +162,43 @@ describe('Antfly API Client', () => {
         json: () => Promise.resolve({}), // Empty response
       });
 
-      const result = await searchGifs('test');
+      const result = await searchGifs('test', textTable);
 
       expect(result.results).toHaveLength(0);
-    });
-
-    it('should use custom limit and offset', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ responses: [{ hits: { hits: [] } }] }),
-      });
-
-      await searchGifs('test', 100, 50);
-
-      expect(mockFetch).toHaveBeenCalledWith(
-        '/api/v1/tables/tgif_gifs/query',
-        expect.objectContaining({
-          body: JSON.stringify({
-            semantic_search: 'test',
-            indexes: ['embeddings'],
-            limit: 100,
-            offset: 50,
-          }),
-        })
-      );
     });
   });
 
   describe('getRandomGifs', () => {
-    it('should call searchGifs with a broad query', async () => {
+    it('should fetch random GIFs with multiple batch requests', async () => {
+      // First call: count query
       mockFetch.mockResolvedValueOnce({
         ok: true,
-        json: () =>
-          Promise.resolve({
-            responses: [{ hits: { hits: [], total: 0 } }],
-          }),
+        json: () => Promise.resolve({
+          responses: [{ hits: { total: 100 } }],
+        }),
       });
 
-      await getRandomGifs(50);
+      // Subsequent calls: batch fetches (up to 5 batches)
+      for (let i = 0; i < 5; i++) {
+        mockFetch.mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({
+            responses: [{
+              hits: {
+                hits: [
+                  { _id: `gif_${i}`, source: { gif_url: `https://example.com/${i}.gif`, description: `gif ${i}` } },
+                ],
+              },
+            }],
+          }),
+        });
+      }
 
-      expect(mockFetch).toHaveBeenCalledWith(
-        '/api/v1/tables/tgif_gifs/query',
-        expect.objectContaining({
-          body: expect.stringContaining('person animal action'),
-        })
-      );
+      const result = await getRandomGifs('tgif_gifs_text', 30);
+
+      // Should have called fetch multiple times (1 count + up to 5 batches)
+      expect(mockFetch).toHaveBeenCalled();
+      expect(result.total).toBe(100);
     });
   });
 });

@@ -99,7 +99,7 @@ export function GifDetail({ gif, onClose, hasActiveSearch, onTagClick }: GifDeta
     };
   }, [handleKeyDown]);
 
-  const gifData = gif as Record<string, unknown>;
+  const gifData = gif;
 
   // Collect ordered AI fields that have values
   const aiFields = AI_FIELD_ORDER.filter(

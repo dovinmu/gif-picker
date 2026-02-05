@@ -60,14 +60,14 @@ describe('GifGrid', () => {
     expect(document.querySelectorAll('.animate-pulse')).toHaveLength(3); // Just card skeletons
   });
 
-  it('should use responsive grid layout', () => {
+  it('should use responsive masonry columns layout', () => {
     render(<GifGrid gifs={mockGifs} />);
 
-    const grid = document.querySelector('.grid');
-    expect(grid).toHaveClass('grid-cols-2');
-    expect(grid).toHaveClass('sm:grid-cols-3');
-    expect(grid).toHaveClass('md:grid-cols-4');
-    expect(grid).toHaveClass('lg:grid-cols-5');
+    const container = document.querySelector('.columns-2');
+    expect(container).toBeInTheDocument();
+    expect(container).toHaveClass('sm:columns-3');
+    expect(container).toHaveClass('md:columns-4');
+    expect(container).toHaveClass('lg:columns-5');
   });
 
   it('should handle gifs with missing IDs by using index', () => {

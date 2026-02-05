@@ -52,19 +52,20 @@ journalctl -u antfly -f
 ## 4. Build and deploy frontend
 
 ```bash
+# Install pnpm
+npm install -g pnpm
+
 # Build locally
-cd web
-npm install
-npm run build
+cd gif-picker
+make web-build
 
 # Transfer to server
-rsync -avz dist/ user@server:/var/www/honeycomb/
+rsync -avz web/dist/ user@server:/var/www/honeycomb/
 
 # Or on server if you have the repo there
-cd gif-picker/web
-npm install
-npm run build
-sudo cp -r dist/* /var/www/honeycomb/
+cd gif-picker
+make web-build
+sudo cp -r web/dist/* /var/www/honeycomb/
 ```
 
 ## 5. Configure Caddy

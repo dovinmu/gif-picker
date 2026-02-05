@@ -74,11 +74,17 @@ describe('GifCard', () => {
     expect(screen.getByText(mockGif.description)).toBeInTheDocument();
   });
 
-  it('should display score badge', () => {
-    render(<GifCard gif={mockGif} />);
+  it('should display score badge when hasActiveSearch is true', () => {
+    render(<GifCard gif={mockGif} hasActiveSearch={true} />);
 
-    // 0.95 * 100 = 95%
-    expect(screen.getByText('95%')).toBeInTheDocument();
+    // score.toFixed(3) = 0.950
+    expect(screen.getByText('0.950')).toBeInTheDocument();
+  });
+
+  it('should not display score badge when hasActiveSearch is false', () => {
+    render(<GifCard gif={mockGif} hasActiveSearch={false} />);
+
+    expect(screen.queryByText('0.950')).not.toBeInTheDocument();
   });
 
   it('should copy URL to clipboard when Copy URL is clicked', async () => {
