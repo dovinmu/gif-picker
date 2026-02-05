@@ -6,7 +6,7 @@ After=network.target
 Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu
-ExecStart=~/antfly/antfly swarm --config ~/antfly/config.yaml 2&>1 | tee ~/antfly/antfly.log
+ExecStart=/home/ubuntu/antfly/antfly swarm --config /home/ubuntu/antfly/gif-picker/config.yaml 2&>1 | tee /home/ubuntu/antfly/antfly.log
 Restart=on-failure
 RestartSec=5
 

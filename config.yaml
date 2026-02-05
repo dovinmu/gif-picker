@@ -1,0 +1,12 @@
+storage:
+  local:
+    base_dir: /home/ubuntu/.antfly
+
+max_shards_per_table: 4
+default_shards_per_table: 2
+
+termite:
+  api_url: http://localhost:11433
+  models_dir: /home/rowan/.termite/models
+  preload:
+    - BAAI/bge-small-en-v1.5
