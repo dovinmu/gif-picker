@@ -8,7 +8,7 @@ honeycomb.example.com {
     # Proxy termite requests (strip prefix)
     handle /termite/* {
         uri strip_prefix /termite
-        reverse_proxy localhost:11434
+        reverse_proxy localhost:11433
     }
 
     # Static frontend (catch-all)
