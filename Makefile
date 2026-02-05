@@ -14,7 +14,7 @@ ANTFLY_URL ?= http://localhost:8080/api/v1
 INGEST_BATCH_SIZE ?= 50
 INGEST_TABLE ?= tgif_gifs
 
-.PHONY: help describe describe-small filter-descriptions ingest ingest-small ingest-text-only ingest-text-only-small ingest-clip-fixed ingest-clip-fixed-small termite-fixed standalone web web-install web-build test lint clean scrape-one describe-sources describe-source ingest-sources ingest-source pipeline-one status
+.PHONY: help describe describe-small filter-descriptions ingest ingest-small ingest-text-only ingest-text-only-small ingest-clip-fixed ingest-clip-fixed-small termite-fixed standalone web web-remote web-install web-build test lint clean scrape-one describe-sources describe-source ingest-sources ingest-source pipeline-one status
 
 help:
 	@echo "GIF Picker - Available targets:"
@@ -45,7 +45,8 @@ help:
 	@echo "  pipeline-one SRC=X     - Full pipeline (scrape+describe+ingest) for source X"
 	@echo "  status                 - Show download/describe status for all sources"
 	@echo ""
-	@echo "  web                 - Start the web development server"
+	@echo "  web                 - Start the web development server (local Antfly)"
+	@echo "  web-remote          - Start the web dev server (remote: honeycomb.rowan.earth)"
 	@echo "  web-install         - Install web dependencies"
 	@echo "  web-build           - Build web app for production"
 	@echo "  test                - Run web tests"
@@ -290,6 +291,10 @@ status:
 # Web development server
 web: web-install
 	cd web && pnpm dev
+
+# Web dev server using remote API (honeycomb.rowan.earth)
+web-remote: web-install
+	cd web && REMOTE=1 pnpm dev
 
 # Install web dependencies
 web-install:
