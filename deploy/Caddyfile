@@ -29,6 +29,11 @@ honeycomb.example.com {
 
 # Antfly admin dashboard on subdomain (no asset path conflicts)
 admin.honeycomb.example.com {
+    basic_auth {
+        # Generate hash: caddy hash-password
+        admin $2a$14$REPLACE_WITH_HASH
+    }
+
     reverse_proxy localhost:8080
 
     encode gzip
