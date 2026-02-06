@@ -5,29 +5,10 @@ honeycomb.example.com {
         reverse_proxy localhost:8080
     }
 
-    # Antfly admin dashboard
-    handle /admin {
-        redir /admin/ permanent
-    }
-    handle /admin/* {
-        uri strip_prefix /admin
-        reverse_proxy localhost:8080
-    }
-
     # Proxy termite requests (strip prefix)
     handle /termite/* {
         uri strip_prefix /termite
         reverse_proxy localhost:11433
-    }
-
-    # Assets: serve React app files first, fall through to Antfly
-    # dashboard assets if not found on disk (hashes never collide)
-    handle /assets/* {
-        root * /var/www/honeycomb
-        file_server {
-            pass_thru
-        }
-        reverse_proxy localhost:8080
     }
 
     # Static frontend (catch-all)
@@ -36,6 +17,19 @@ honeycomb.example.com {
         try_files {path} /index.html
         file_server
     }
+
+    encode gzip
+
+    header {
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy strict-origin-when-cross-origin
+    }
+}
+
+# Antfly admin dashboard on subdomain (no asset path conflicts)
+admin.honeycomb.example.com {
+    reverse_proxy localhost:8080
 
     encode gzip
 
