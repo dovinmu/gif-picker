@@ -1,21 +1,9 @@
 // Antfly API client for GIF search
 
 const API_BASE = '/api/v1';
-const TERMITE_BASE = '/termite'; // Proxied to fixed termite (localhost:11434)
 
 // Tags that are globally blocked - GIFs with these tags are hidden from all users
 const BLOCKED_TAGS = new Set(['porn']);
-
-export interface TableConfig {
-  name: string;
-  label: string;
-  searchMode: 'semantic' | 'clip_vector';
-}
-
-export const TABLES: TableConfig[] = [
-  { name: 'tgif_gifs_text', label: 'Text Descriptions', searchMode: 'semantic' },
-  { name: 'tgif_gifs', label: 'CLIP Embeddings', searchMode: 'clip_vector' },
-];
 
 export interface GifResult {
   id: string;
@@ -39,37 +27,6 @@ export interface GifResult {
 export interface SearchResponse {
   results: GifResult[];
   total: number;
-}
-
-// Embed query text using fixed termite (CLIP with EOS pooling fix)
-async function embedQuery(text: string): Promise<number[]> {
-  const response = await fetch(`${TERMITE_BASE}/api/embed`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: 'openai/clip-vit-base-patch32',
-      input: [{ type: 'text', text }],
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Termite embed failed: ${response.statusText}`);
-  }
-
-  // Parse binary response: uint64 numVectors, uint64 dimension, float32[] values
-  const buffer = await response.arrayBuffer();
-  const view = new DataView(buffer);
-
-  // Skip numVectors (8 bytes), read dimension (8 bytes)
-  const dimension = Number(view.getBigUint64(8, true));
-
-  // Read float32 values starting at byte 16
-  const embedding: number[] = [];
-  for (let i = 0; i < dimension; i++) {
-    embedding.push(view.getFloat32(16 + i * 4, true));
-  }
-
-  return embedding;
 }
 
 export async function getGifById(tableName: string, id: string): Promise<GifResult | null> {
@@ -163,8 +120,8 @@ function buildFullTextSearch(phrases: string[], looseText: string): Record<strin
   return { conjuncts: parts };
 }
 
-// Build exclusion_query from negative tags, blocked tags, and excluded attributions
-function buildExclusionQuery(negativeTags: string[], excludedAttributions?: Set<string>): Record<string, unknown> | undefined {
+// Build exclusion_query from negative tags and blocked tags
+function buildExclusionQuery(negativeTags: string[]): Record<string, unknown> | undefined {
   const parts: string[] = [];
 
   // Add globally blocked tags
@@ -177,11 +134,6 @@ function buildExclusionQuery(negativeTags: string[], excludedAttributions?: Set<
     // Quote values to handle multi-word tags like "Live Leak"
     parts.push(`tags:"${tag}"`);
   }
-  if (excludedAttributions) {
-    for (const attr of excludedAttributions) {
-      parts.push(`attribution:"${attr}"`);
-    }
-  }
 
   if (parts.length === 0) return undefined;
   return { query: parts.join(' OR ') };
@@ -189,70 +141,55 @@ function buildExclusionQuery(negativeTags: string[], excludedAttributions?: Set<
 
 export async function searchGifs(
   query: string,
-  table: TableConfig,
+  tableName: string,
   limit: number = 50,
-  excludedAttributions?: Set<string>,
 ): Promise<SearchResponse> {
-  let body: Record<string, unknown>;
+  const body: Record<string, unknown> = { limit };
   const { phrases, looseText, tags, negativeTags } = parseQuery(query);
 
-  if (table.searchMode === 'semantic') {
-    body = { limit };
+  const fts = buildFullTextSearch(phrases, looseText);
+  const hasTextSearch = !!(fts || looseText);
 
-    const fts = buildFullTextSearch(phrases, looseText);
-    const hasTextSearch = !!(fts || looseText);
-
-    if (fts) {
-      body.full_text_search = fts;
-    }
-
-    // Only include semantic search when there are unquoted terms
-    if (looseText) {
-      body.semantic_search = looseText;
-      body.indexes = ['embeddings'];
-      if (fts) {
-        body.merge_strategy = 'rrf';
-      }
-    }
-
-    // Apply positive tag filter
-    // Use match_phrase for multi-word tags (Bleve tokenizes "Live Leak" into ["live","leak"],
-    // so term:"live leak" won't match — match_phrase finds adjacent tokens in order)
-    if (tags.length > 0) {
-      const tagQueries = tags.map(t =>
-        t.includes(' ')
-          ? { match_phrase: t, field: 'tags' }
-          : { term: t, field: 'tags' }
-      );
-      const tagQuery = tagQueries.length === 1 ? tagQueries[0] : { conjuncts: tagQueries };
-
-      if (hasTextSearch) {
-        // Tags as a filter on top of text/semantic search
-        body.filter_query = tagQuery;
-      } else {
-        // Tag-only: use as the primary full-text search (no semantic)
-        body.full_text_search = tagQuery;
-      }
-    }
-
-    // Apply negative tags + attribution exclusions
-    const exclusion = buildExclusionQuery(negativeTags, excludedAttributions);
-    if (exclusion) {
-      body.exclusion_query = exclusion;
-    }
-  } else {
-    // CLIP mode: embed query client-side via fixed termite
-    const queryVector = await embedQuery(looseText || [...phrases, query].join(' '));
-    body = {
-      vector_search: {
-        index: 'embeddings',
-        vector: queryVector,
-      },
-      limit,
-    };
+  if (fts) {
+    body.full_text_search = fts;
   }
 
-  const response = await fetch(`${API_BASE}/tables/${table.name}/query`, {
+  // Only include semantic search when there are unquoted terms
+  if (looseText) {
+    body.semantic_search = looseText;
+    body.indexes = ['embeddings'];
+    if (fts) {
+      body.merge_strategy = 'rrf';
+    }
+  }
+
+  // Apply positive tag filter
+  // Use match_phrase for multi-word tags (Bleve tokenizes "Live Leak" into ["live","leak"],
+  // so term:"live leak" won't match — match_phrase finds adjacent tokens in order)
+  if (tags.length > 0) {
+    const tagQueries = tags.map(t =>
+      t.includes(' ')
+        ? { match_phrase: t, field: 'tags' }
+        : { term: t, field: 'tags' }
+    );
+    const tagQuery = tagQueries.length === 1 ? tagQueries[0] : { conjuncts: tagQueries };
+
+    if (hasTextSearch) {
+      // Tags as a filter on top of text/semantic search
+      body.filter_query = tagQuery;
+    } else {
+      // Tag-only: use as the primary full-text search (no semantic)
+      body.full_text_search = tagQuery;
+    }
+  }
+
+  // Apply negative tags exclusion
+  const exclusion = buildExclusionQuery(negativeTags);
+  if (exclusion) {
+    body.exclusion_query = exclusion;
+  }
+
+  const response = await fetch(`${API_BASE}/tables/${tableName}/query`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -306,11 +243,11 @@ export async function searchGifs(
   };
 }
 
-export async function getRandomGifs(tableName: string, limit: number = 30, excludedAttributions?: Set<string>): Promise<SearchResponse> {
+export async function getRandomGifs(tableName: string, limit: number = 30): Promise<SearchResponse> {
   // Antfly returns docs in insertion order, so a single query from offset 0
   // only gets the most recently ingested source. Instead, fire parallel small
   // queries at random offsets, merge & dedupe, then shuffle.
-  const exclusion = buildExclusionQuery([], excludedAttributions);
+  const exclusion = buildExclusionQuery([]);
 
   // First, get total count with a cheap limit=0 query
   const countBody: Record<string, unknown> = { limit: 0 };
@@ -378,28 +315,4 @@ export async function getRandomGifs(tableName: string, limit: number = 30, exclu
     results: pool.slice(0, limit),
     total,
   };
-}
-
-export interface AttributionBucket {
-  key: string;
-  count: number;
-}
-
-export async function getAttributions(tableName: string): Promise<AttributionBucket[]> {
-  const response = await fetch(`${API_BASE}/tables/${tableName}/query`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      limit: 0,
-      aggregations: {
-        attributions: { type: 'terms', field: 'attribution', size: 50 },
-      },
-    }),
-  });
-
-  if (!response.ok) return [];
-
-  const data = await response.json();
-  const buckets = data.responses?.[0]?.aggregations?.attributions?.buckets ?? [];
-  return buckets.map((b: any) => ({ key: b.key as string, count: b.doc_count as number }));
 }

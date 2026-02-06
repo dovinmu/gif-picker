@@ -3,8 +3,9 @@ import { SearchBox } from './components/SearchBox';
 import { GifGrid } from './components/GifGrid';
 import { GifDetail } from './components/GifDetail';
 import { AboutModal } from './components/AboutModal';
-import { FilterOverlay } from './components/FilterOverlay';
-import { searchGifs, getRandomGifs, getGifById, TABLES, type GifResult, type TableConfig } from './lib/antfly';
+import { searchGifs, getRandomGifs, getGifById, type GifResult } from './lib/antfly';
+
+const TABLE_NAME = 'tgif_gifs_text';
 
 function App() {
   const [gifs, setGifs] = useState<GifResult[]>([]);
@@ -12,13 +13,11 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [lastQuery, setLastQuery] = useState('');
   const [initialLoadDone, setInitialLoadDone] = useState(false);
-  const [selectedTable, setSelectedTable] = useState<TableConfig>(TABLES[0]);
   const [selectedGif, setSelectedGif] = useState<GifResult | null>(null);
   const [searchKey, setSearchKey] = useState(0);
   const [showAbout, setShowAbout] = useState(false);
   const [totalGifs, setTotalGifs] = useState<number | null>(null);
   const [searchInput, setSearchInput] = useState('');
-  const [excludedAttributions, setExcludedAttributions] = useState<Set<string>>(new Set());
   const [isDark, setIsDark] = useState(() => {
     if (typeof window !== 'undefined') {
       return window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -44,7 +43,7 @@ function App() {
     window.history.replaceState(null, '', newUrl);
   }, [selectedGif]);
 
-  // Load GIFs when table changes, then open deep-linked GIF if any
+  // Load GIFs on mount, then open deep-linked GIF if any
   useEffect(() => {
     const loadGifs = async () => {
       setIsLoading(true);
@@ -52,7 +51,7 @@ function App() {
       setGifs([]);
       setLastQuery('');
       try {
-        const response = await getRandomGifs(selectedTable.name);
+        const response = await getRandomGifs(TABLE_NAME);
         setGifs(response.results);
         setTotalGifs(response.total);
 
@@ -66,7 +65,7 @@ function App() {
             setSelectedGif(found);
           } else {
             // Fetch it directly from Antfly
-            const gif = await getGifById(selectedTable.name, gifId);
+            const gif = await getGifById(TABLE_NAME, gifId);
             if (gif) setSelectedGif(gif);
           }
         }
@@ -79,7 +78,7 @@ function App() {
       }
     };
     loadGifs();
-  }, [selectedTable]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSearch = useCallback(async (query: string) => {
     if (query === lastQuery) return;
@@ -89,8 +88,7 @@ function App() {
     setError(null);
 
     try {
-      const excluded = excludedAttributions.size > 0 ? excludedAttributions : undefined;
-      const response = await searchGifs(query, selectedTable, 20, excluded);
+      const response = await searchGifs(query, TABLE_NAME, 20);
       setGifs(response.results);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Search failed');
@@ -98,7 +96,7 @@ function App() {
     } finally {
       setIsLoading(false);
     }
-  }, [lastQuery, selectedTable, excludedAttributions]);
+  }, [lastQuery]);
 
   const handleClearSearch = useCallback(async () => {
     setSearchKey(k => k + 1);
@@ -107,8 +105,7 @@ function App() {
     setIsLoading(true);
     setError(null);
     try {
-      const excluded = excludedAttributions.size > 0 ? excludedAttributions : undefined;
-      const response = await getRandomGifs(selectedTable.name, 30, excluded);
+      const response = await getRandomGifs(TABLE_NAME, 30);
       setGifs(response.results);
       setTotalGifs(response.total);
     } catch (err) {
@@ -116,7 +113,7 @@ function App() {
     } finally {
       setIsLoading(false);
     }
-  }, [selectedTable, excludedAttributions]);
+  }, []);
 
   // Handle tag click from GifDetail: append tag: prefix and search
   const handleTagClick = useCallback(async (tag: string) => {
@@ -129,8 +126,7 @@ function App() {
     setIsLoading(true);
     setError(null);
     try {
-      const excluded = excludedAttributions.size > 0 ? excludedAttributions : undefined;
-      const response = await searchGifs(newQuery, selectedTable, 20, excluded);
+      const response = await searchGifs(newQuery, TABLE_NAME, 20);
       setGifs(response.results);
       setLastQuery(newQuery);
     } catch (err) {
@@ -138,29 +134,7 @@ function App() {
     } finally {
       setIsLoading(false);
     }
-  }, [searchInput, selectedTable, excludedAttributions]);
-
-  // Handle attribution filter changes: re-run current query or random load
-  const handleFilterChange = useCallback(async (excluded: Set<string>) => {
-    setExcludedAttributions(excluded);
-    setIsLoading(true);
-    setError(null);
-    const excl = excluded.size > 0 ? excluded : undefined;
-    try {
-      if (lastQuery) {
-        const response = await searchGifs(lastQuery, selectedTable, 20, excl);
-        setGifs(response.results);
-      } else {
-        const response = await getRandomGifs(selectedTable.name, 30, excl);
-        setGifs(response.results);
-        setTotalGifs(response.total);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Filter failed');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [lastQuery, selectedTable]);
+  }, [searchInput]);
 
   return (
     <div className="min-h-screen bg-[hsl(var(--background))]">
@@ -175,26 +149,6 @@ function App() {
             >
               Honeycomb
             </h1>
-            <div className="flex items-center gap-2">
-              <select
-                value={selectedTable.name}
-                onChange={(e) => {
-                  const table = TABLES.find((t) => t.name === e.target.value);
-                  if (table) setSelectedTable(table);
-                }}
-                className="px-3 py-1.5 rounded-lg text-sm bg-[hsl(var(--muted))] text-[hsl(var(--foreground))] border border-[hsl(var(--border))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
-              >
-                {TABLES.map((table) => (
-                  <option key={table.name} value={table.name}>
-                    {table.label}
-                  </option>
-                ))}
-              </select>
-            <FilterOverlay
-              tableName={selectedTable.name}
-              excludedAttributions={excludedAttributions}
-              onFilterChange={handleFilterChange}
-            />
             <button
               onClick={() => setIsDark(!isDark)}
               className="p-2 rounded-lg hover:bg-[hsl(var(--muted))] transition-colors"
@@ -238,7 +192,6 @@ function App() {
                 </svg>
               )}
             </button>
-            </div>
           </div>
           <SearchBox key={searchKey} onSearch={handleSearch} isLoading={isLoading} initialValue={searchInput} />
         </div>

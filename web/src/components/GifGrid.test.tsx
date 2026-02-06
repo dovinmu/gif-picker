@@ -46,17 +46,17 @@ describe('GifGrid', () => {
   it('should render all gif cards', () => {
     render(<GifGrid gifs={mockGifs} />);
 
-    // Each gif should have its description rendered
-    expect(screen.getByText('First gif')).toBeInTheDocument();
-    expect(screen.getByText('Second gif')).toBeInTheDocument();
-    expect(screen.getByText('Third gif')).toBeInTheDocument();
+    // Each gif should have its description as alt text
+    expect(screen.getByAltText('First gif')).toBeInTheDocument();
+    expect(screen.getByAltText('Second gif')).toBeInTheDocument();
+    expect(screen.getByAltText('Third gif')).toBeInTheDocument();
   });
 
   it('should render gifs even while loading', () => {
     render(<GifGrid gifs={mockGifs} isLoading={true} />);
 
     // Should show gifs, not skeleton
-    expect(screen.getByText('First gif')).toBeInTheDocument();
+    expect(screen.getByAltText('First gif')).toBeInTheDocument();
     expect(document.querySelectorAll('.animate-pulse')).toHaveLength(3); // Just card skeletons
   });
 
@@ -87,7 +87,7 @@ describe('GifGrid', () => {
   it('should handle single gif', () => {
     render(<GifGrid gifs={[mockGifs[0]]} />);
 
-    expect(screen.getByText('First gif')).toBeInTheDocument();
+    expect(screen.getByAltText('First gif')).toBeInTheDocument();
   });
 
   it('should handle large number of gifs', () => {
@@ -101,9 +101,9 @@ describe('GifGrid', () => {
 
     render(<GifGrid gifs={manyGifs} />);
 
-    // Check a few rendered
-    expect(screen.getByText('Gif number 0')).toBeInTheDocument();
-    expect(screen.getByText('Gif number 50')).toBeInTheDocument();
-    expect(screen.getByText('Gif number 99')).toBeInTheDocument();
+    // Check a few rendered (descriptions are in alt text)
+    expect(screen.getByAltText('Gif number 0')).toBeInTheDocument();
+    expect(screen.getByAltText('Gif number 50')).toBeInTheDocument();
+    expect(screen.getByAltText('Gif number 99')).toBeInTheDocument();
   });
 });

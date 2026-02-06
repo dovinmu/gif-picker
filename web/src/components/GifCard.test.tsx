@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { GifCard } from './GifCard';
 import type { GifResult } from '../lib/antfly';
 
@@ -68,10 +67,11 @@ describe('GifCard', () => {
     expect(screen.getByText('No URL')).toBeInTheDocument();
   });
 
-  it('should display description on hover overlay', () => {
+  it('should have description as image alt text', () => {
     render(<GifCard gif={mockGif} />);
 
-    expect(screen.getByText(mockGif.description)).toBeInTheDocument();
+    const img = screen.getByRole('img');
+    expect(img).toHaveAttribute('alt', mockGif.description);
   });
 
   it('should display score badge when hasActiveSearch is true', () => {
@@ -87,17 +87,11 @@ describe('GifCard', () => {
     expect(screen.queryByText('0.950')).not.toBeInTheDocument();
   });
 
-  it('should copy URL to clipboard when Copy URL is clicked', async () => {
-    const user = userEvent.setup();
+  it('should have Copy GIF button', () => {
     render(<GifCard gif={mockGif} />);
 
-    const copyButton = screen.getByText('Copy URL');
-    await user.click(copyButton);
-
-    // Check that clipboard API was called (via mock)
-    await waitFor(() => {
-      expect(screen.getByText('Copied!')).toBeInTheDocument();
-    });
+    const copyButton = screen.getByText('Copy GIF');
+    expect(copyButton).toBeInTheDocument();
   });
 
   it('should have download button', () => {

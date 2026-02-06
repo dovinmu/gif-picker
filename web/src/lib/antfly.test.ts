@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { searchGifs, getRandomGifs, TABLES } from './antfly';
+import { searchGifs, getRandomGifs } from './antfly';
 
 // Mock fetch globally
 const mockFetch = vi.fn();
 globalThis.fetch = mockFetch;
 
-const textTable = TABLES[0]; // tgif_gifs_text, semantic mode
+const TEXT_TABLE = 'tgif_gifs_text';
 
 describe('Antfly API Client', () => {
   beforeEach(() => {
@@ -44,7 +44,7 @@ describe('Antfly API Client', () => {
         json: () => Promise.resolve(mockResponse),
       });
 
-      const result = await searchGifs('cat playing', textTable, 50);
+      const result = await searchGifs('cat playing', TEXT_TABLE, 50);
 
       // Verify the request
       expect(mockFetch).toHaveBeenCalledWith(
@@ -79,7 +79,7 @@ describe('Antfly API Client', () => {
         json: () => Promise.resolve(mockResponse),
       });
 
-      const result = await searchGifs('nonexistent query', textTable);
+      const result = await searchGifs('nonexistent query', TEXT_TABLE);
 
       expect(result.results).toHaveLength(0);
       expect(result.total).toBe(0);
@@ -107,7 +107,7 @@ describe('Antfly API Client', () => {
         json: () => Promise.resolve(mockResponse),
       });
 
-      const result = await searchGifs('test', textTable);
+      const result = await searchGifs('test', TEXT_TABLE);
 
       expect(result.results[0].id).toBe('gif_456');
       expect(result.results[0].gif_url).toBe('');
@@ -141,7 +141,7 @@ describe('Antfly API Client', () => {
         json: () => Promise.resolve(mockResponse),
       });
 
-      const result = await searchGifs('test', textTable);
+      const result = await searchGifs('test', TEXT_TABLE);
 
       expect(result.results[0].id).toBe('gif_789');
       expect(result.results[0].gif_url).toBe('https://example.com/es.gif');
@@ -153,7 +153,7 @@ describe('Antfly API Client', () => {
         statusText: 'Internal Server Error',
       });
 
-      await expect(searchGifs('test', textTable)).rejects.toThrow('Search failed: Internal Server Error');
+      await expect(searchGifs('test', TEXT_TABLE)).rejects.toThrow('Search failed: Internal Server Error');
     });
 
     it('should handle malformed response', async () => {
@@ -162,7 +162,7 @@ describe('Antfly API Client', () => {
         json: () => Promise.resolve({}), // Empty response
       });
 
-      const result = await searchGifs('test', textTable);
+      const result = await searchGifs('test', TEXT_TABLE);
 
       expect(result.results).toHaveLength(0);
     });

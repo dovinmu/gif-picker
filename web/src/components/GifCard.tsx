@@ -8,17 +8,27 @@ interface GifCardProps {
 }
 
 export function GifCard({ gif, onClick, hasActiveSearch }: GifCardProps) {
-  const [copied, setCopied] = useState(false);
+  const [copiedImage, setCopiedImage] = useState<boolean | "error">(false);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(false);
 
-  const handleCopy = useCallback(async () => {
+  const handleCopyImage = useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(gif.gif_url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      const html = `<img src="${gif.gif_url}">`;
+      const htmlBlob = new Blob([html], { type: "text/html" });
+      const textBlob = new Blob([gif.gif_url], { type: "text/plain" });
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          "text/html": htmlBlob,
+          "text/plain": textBlob,
+        }),
+      ]);
+      setCopiedImage(true);
+      setTimeout(() => setCopiedImage(false), 2000);
     } catch (err) {
       console.error("Failed to copy:", err);
+      setCopiedImage("error");
+      setTimeout(() => setCopiedImage(false), 2000);
     }
   }, [gif.gif_url]);
 
@@ -70,22 +80,36 @@ export function GifCard({ gif, onClick, hasActiveSearch }: GifCardProps) {
         onError={() => setError(true)}
       />
 
-      {/* Hover overlay */}
-      <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between p-3">
-        {/* Description */}
-        <p className="text-white text-sm line-clamp-3">{gif.description}</p>
+      {/* Score badge - only during active search, behind hover overlay */}
+      {hasActiveSearch && (
+        <div className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 bg-black/40 rounded text-gray-300 text-[10px] font-mono">
+          {gif.score.toFixed(3)}
+        </div>
+      )}
 
+      {/* Hover overlay */}
+      <div className="absolute inset-0 bg-black/10 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-3">
         {/* Actions */}
         <div className="flex gap-2">
           <button
-            onClick={(e) => { e.stopPropagation(); handleCopy(); }}
-            className="flex-1 px-3 py-2 bg-white/20 hover:bg-white/30 rounded text-white text-sm font-medium transition-colors"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleCopyImage();
+            }}
+            className="flex-1 px-3 py-2 bg-black/30 hover:bg-black/50 rounded text-white text-sm font-medium transition-colors"
           >
-            {copied ? "Copied!" : "Copy URL"}
+            {copiedImage === "error"
+              ? "Failed!"
+              : copiedImage
+                ? "Copied!"
+                : "Copy GIF"}
           </button>
           <button
-            onClick={(e) => { e.stopPropagation(); handleDownload(); }}
-            className="px-3 py-2 bg-white/20 hover:bg-white/30 rounded text-white text-sm font-medium transition-colors"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleDownload();
+            }}
+            className="px-3 py-2 bg-black/30 hover:bg-black/50 rounded text-white text-sm font-medium transition-colors"
             title="Download GIF"
           >
             <svg
@@ -106,13 +130,6 @@ export function GifCard({ gif, onClick, hasActiveSearch }: GifCardProps) {
           </button>
         </div>
       </div>
-
-      {/* Score badge - only during active search */}
-      {hasActiveSearch && (
-        <div className="absolute top-2 left-2 px-2 py-1 bg-black/70 rounded text-white text-xs font-mono">
-          {gif.score.toFixed(3)}
-        </div>
-      )}
     </div>
   );
 }
