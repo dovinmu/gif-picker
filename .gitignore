@@ -6,3 +6,6 @@ sources/*/descriptions.jsonl
 
 # Manifests track state - keep these if you want
 # sources/*/manifest.json
+
+# Python cache
+pipeline/__pycache__/
