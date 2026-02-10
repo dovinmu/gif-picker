@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["google-genai", "Pillow"]
+# dependencies = ["google-genai", "Pillow", "python-dotenv"]
 # ///
 """
 Generate rich text descriptions of GIFs/videos from source manifests using Gemini.
@@ -30,13 +30,16 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+from dotenv import load_dotenv
 from PIL import Image
 from google import genai
 from google.genai import types
 
+load_dotenv()
+
 # Config
 SOURCES_DIR = Path(__file__).parent / "sources"
-API_KEY_PATH = os.path.expanduser("~/.tokens/gemini_api_key")
+API_KEY_ENV_VAR = "GEMINI_API_KEY"
 MODEL_NAME = "gemini-2.0-flash-lite"
 
 # Frame extraction settings
@@ -58,8 +61,11 @@ Respond with ONLY the JSON object, no markdown or extra text."""
 
 
 def load_api_key() -> str:
-    with open(API_KEY_PATH) as f:
-        return f.read().strip().split()[0]
+    key = os.environ.get(API_KEY_ENV_VAR)
+    if not key:
+        print(f"Error: {API_KEY_ENV_VAR} environment variable not set", file=sys.stderr)
+        sys.exit(1)
+    return key
 
 
 def find_sources(source_filter: str | None = None) -> list[Path]:

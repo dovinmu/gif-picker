@@ -30,7 +30,8 @@ help:
 	@echo "  describe-all           - Generate descriptions for all sources"
 	@echo "  ingest SRC=X           - Ingest source X into Antfly"
 	@echo "  ingest-all             - Ingest all sources into Antfly"
-	@echo "  pipeline SRC=X         - Full pipeline (scrape+upload+describe+ingest)"
+	@echo "  pipeline SRC=X         - Scrape + upload only"
+	@echo "  pipeline SRC=X DESCRIBE=1 - Full pipeline (scrape+upload+describe+ingest)"
 	@echo "  status                 - Show pipeline status for all sources"
 	@echo ""
 	@echo "  --- Setup ---"
@@ -87,11 +88,18 @@ ingest-all:
 		--batch-size $(INGEST_BATCH_SIZE)
 
 pipeline:
-	@test -n "$(SRC)" || (echo "Usage: make pipeline SRC=<source_name>" && exit 1)
+	@test -n "$(SRC)" || (echo "Usage: make pipeline SRC=<source_name> [DESCRIBE=1]" && exit 1)
 	$(MAKE) scrape SRC=$(SRC)
 	$(MAKE) upload SRC=$(SRC)
+ifdef DESCRIBE
 	$(MAKE) describe SRC=$(SRC)
 	$(MAKE) ingest SRC=$(SRC)
+else
+	@echo ""
+	@echo "NOTE: Skipped describe+ingest. To generate descriptions and ingest, run:"
+	@echo "  make pipeline SRC=$(SRC) DESCRIBE=1"
+	@echo "  (or separately: make describe SRC=$(SRC) && make ingest SRC=$(SRC))"
+endif
 
 status:
 	@echo "Source pipeline status:"
