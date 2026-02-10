@@ -9,3 +9,6 @@ sources/*/descriptions.jsonl
 
 # Python cache
 pipeline/__pycache__/
+
+# Environment variables (credentials)
+.env

@@ -4,31 +4,28 @@
 # dependencies = ["playwright"]
 # ///
 """
-Scrape GIFs/videos from kidmograph.com/personal using Playwright.
+Discover GIFs/videos from kidmograph.com/personal using Playwright.
 
 Wix Pro Gallery loads content dynamically via JS, so we need a real browser.
-Discovers media URLs, downloads to media/, and maintains manifest.json.
+Discovers media URLs and writes them to manifest.json. Does NOT download media —
+that's handled by pipeline/upload_r2.py which streams directly to R2.
 
 Usage:
     uv run sources/kidmograph/scrape.py
     uv run sources/kidmograph/scrape.py --limit 10
-    uv run sources/kidmograph/scrape.py --skip-download
+    uv run sources/kidmograph/scrape.py --force
 """
 
 import argparse
 import hashlib
 import json
 import re
-import sys
-import time
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.request import urlopen, Request
 
 SOURCE_NAME = "kidmograph"
 SOURCE_URL = "https://www.kidmograph.com/personal"
 SOURCE_DIR = Path(__file__).parent
-MEDIA_DIR = SOURCE_DIR / "media"
 MANIFEST_PATH = SOURCE_DIR / "manifest.json"
 
 
@@ -59,12 +56,9 @@ def save_manifest(manifest: dict) -> None:
 
 def normalize_wix_url(url: str) -> str:
     """Strip Wix image service resize/fill params to get full-res URL."""
-    # Wix pattern: .../media/<id>/v1/fill/w_X,h_Y/...
-    # We want just: https://static.wixstatic.com/media/<id>
     match = re.match(r"(https?://static\.wixstatic\.com/media/[^/]+)", url)
     if match:
         return match.group(1)
-    # Video URLs: https://video.wixstatic.com/video/<id>/...
     match = re.match(r"(https?://video\.wixstatic\.com/video/[^/]+)", url)
     if match:
         return match.group(1)
@@ -104,7 +98,6 @@ def scrape(limit: int = 0) -> list[dict]:
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             page.wait_for_timeout(1500)
 
-            # Count media elements
             count = page.evaluate("""() => {
                 const imgs = document.querySelectorAll('img[src*="wixstatic.com/media"]');
                 const vids = document.querySelectorAll('video[src*="wixstatic.com"], video source[src*="wixstatic.com"]');
@@ -127,12 +120,11 @@ def scrape(limit: int = 0) -> list[dict]:
                 print("Found 'Load More' button, clicking...")
                 load_more.click()
                 page.wait_for_timeout(3000)
-                # Scroll again after load more
                 for _ in range(20):
                     page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                     page.wait_for_timeout(1500)
         except Exception:
-            pass  # No load more button, that's fine
+            pass
 
         # Extract all media URLs
         media_data = page.evaluate("""() => {
@@ -193,53 +185,15 @@ def scrape(limit: int = 0) -> list[dict]:
     return items
 
 
-def download_item(item: dict, source_dir: Path) -> bool:
-    """Download a single media item. Returns True on success."""
-    local_path = source_dir / item["local_file"]
-    if local_path.exists():
-        return True
-
-    url = item["original_url"]
-    try:
-        req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urlopen(req, timeout=30) as resp:
-            data = resp.read()
-
-            # Check content type to detect format mismatches
-            content_type = resp.headers.get("Content-Type", "")
-            if "video/mp4" in content_type and item["format"] == "gif":
-                item["format"] = "mp4"
-                new_file = item["local_file"].rsplit(".", 1)[0] + ".mp4"
-                item["local_file"] = new_file
-                local_path = source_dir / new_file
-
-            local_path.parent.mkdir(parents=True, exist_ok=True)
-            local_path.write_bytes(data)
-
-            item["file_size_bytes"] = len(data)
-            print(f"  Downloaded: {local_path.name} ({len(data)} bytes)")
-            return True
-    except Exception as e:
-        print(f"  Download error for {url}: {e}", file=sys.stderr)
-        item["download_error"] = str(e)
-        return False
-
-
 def main():
-    parser = argparse.ArgumentParser(description=f"Scrape GIFs from {SOURCE_NAME}")
-    parser.add_argument("--limit", type=int, default=0, help="Limit items to scrape (0=all)")
-    parser.add_argument("--skip-download", action="store_true", help="Only discover URLs")
+    parser = argparse.ArgumentParser(description=f"Discover GIFs from {SOURCE_NAME}")
+    parser.add_argument("--limit", type=int, default=0, help="Limit items to discover (0=all)")
     parser.add_argument("--force", action="store_true", help="Re-scrape even if manifest exists")
-    parser.add_argument("--download-delay", type=float, default=0.5,
-                        help="Delay between downloads in seconds (default: 0.5)")
     args = parser.parse_args()
-
-    MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 
     manifest = load_manifest()
     existing_urls = {item["original_url"] for item in manifest["items"]}
 
-    # Scrape phase: discover new items
     if args.force or not manifest["scraped_at"]:
         new_items = scrape(limit=args.limit)
 
@@ -249,44 +203,22 @@ def main():
                 continue
 
             item_id = make_id(raw["original_url"])
-            ext = raw["format"]
             item = {
                 "id": item_id,
                 "original_url": raw["original_url"],
                 "page_url": raw["page_url"],
                 "title": raw.get("title", ""),
-                "local_file": f"media/{item_id}.{ext}",
-                "format": ext,
-                "downloaded": False,
-                "described": False,
+                "format": raw["format"],
             }
             manifest["items"].append(item)
             existing_urls.add(raw["original_url"])
             added += 1
 
         manifest["scraped_at"] = datetime.now(timezone.utc).isoformat()
-        print(f"Added {added} new items to manifest")
+        save_manifest(manifest)
+        print(f"Added {added} new items to manifest ({len(manifest['items'])} total)")
     else:
         print(f"Manifest already exists with {len(manifest['items'])} items (use --force to re-scrape)")
-
-    # Download phase
-    if not args.skip_download:
-        to_download = [i for i in manifest["items"] if not i["downloaded"]]
-        print(f"Downloading {len(to_download)} items...")
-        for i, item in enumerate(to_download):
-            if download_item(item, SOURCE_DIR):
-                item["downloaded"] = True
-            # Save manifest periodically
-            if (i + 1) % 10 == 0:
-                save_manifest(manifest)
-            if args.download_delay > 0:
-                time.sleep(args.download_delay)
-
-    save_manifest(manifest)
-
-    downloaded = sum(1 for i in manifest["items"] if i["downloaded"])
-    described = sum(1 for i in manifest["items"] if i["described"])
-    print(f"\nManifest: {len(manifest['items'])} items, {downloaded} downloaded, {described} described")
 
 
 if __name__ == "__main__":

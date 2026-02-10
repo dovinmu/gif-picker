@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["httpx"]
+# dependencies = ["httpx", "python-dotenv"]
 # ///
 """
 Ingest GIF descriptions into Antfly via the HTTP API.
@@ -26,7 +26,10 @@ import sys
 import time
 from pathlib import Path
 
+from dotenv import load_dotenv
 import httpx
+
+load_dotenv()
 
 # Config
 ANTFLY_URL = os.environ.get("ANTFLY_URL", "http://localhost:8080/api/v1")
