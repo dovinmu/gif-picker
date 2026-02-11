@@ -21,6 +21,7 @@ Bucket path structure:
 Usage:
     uv run pipeline/upload_r2.py --source kidmograph
     uv run pipeline/upload_r2.py --source tgif
+    uv run pipeline/upload_r2.py --source tgif --workers 20
     uv run pipeline/upload_r2.py --all-sources
 """
 
@@ -28,12 +29,15 @@ import argparse
 import json
 import os
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from urllib.request import urlopen, Request
 
 from dotenv import load_dotenv
 import boto3
+from botocore.config import Config as BotoConfig
 from botocore.exceptions import ClientError
 
 load_dotenv()
@@ -41,7 +45,8 @@ load_dotenv()
 # Config
 SOURCES_DIR = Path(__file__).parent.parent / "sources"
 BUCKET_NAME = "honeycomb-media"
-MANIFEST_SYNC_INTERVAL = 20  # sync manifest to R2 every N uploads
+MANIFEST_SYNC_INTERVAL = 100  # sync manifest to R2 every N completions
+DEFAULT_WORKERS = 10
 
 
 def get_s3_client():
@@ -51,6 +56,11 @@ def get_s3_client():
         endpoint_url=os.environ["R2_ENDPOINT_URL"],
         aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
         aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
+        config=BotoConfig(
+            connect_timeout=30,
+            read_timeout=120,
+            retries={"max_attempts": 3, "mode": "adaptive"},
+        ),
     )
 
 
@@ -91,8 +101,7 @@ def download_url(url: str, timeout: int = 30) -> bytes | None:
             if "assets.tumblr.com/images/media_violation/" in resp.url:
                 return None
             return resp.read()
-    except Exception as e:
-        print(f"  Download error for {url}: {e}", file=sys.stderr)
+    except Exception:
         return None
 
 
@@ -156,8 +165,44 @@ def save_manifest_r2(s3, source_name: str, manifest: dict) -> None:
 
 # --- Upload ---
 
-def upload_source(s3, source_name: str) -> int:
-    """Upload media for a source. Streams from original URLs to R2. Returns count uploaded."""
+def process_item(s3, source_name: str, item: dict) -> str:
+    """Process a single item: download + upload. Returns 'uploaded', 'skipped', or 'failed'.
+
+    On success, sets item['r2_url'] as a side effect.
+    """
+    item_id = item["id"]
+    fmt = item.get("format", "gif")
+    ext = fmt if fmt in ("gif", "mp4", "webm") else "gif"
+    key = f"sources/{source_name}/media/{item_id}.{ext}"
+
+    # Check R2 directly (in case manifest is stale)
+    if object_exists(s3, key):
+        item["r2_url"] = get_public_url(key)
+        return "skipped"
+
+    # Try local cache first, then stream from original URL
+    data = None
+    local_file = item.get("local_file")
+    if local_file:
+        local_path = SOURCES_DIR / source_name / local_file
+        if local_path.exists():
+            data = local_path.read_bytes()
+
+    if data is None:
+        url = item.get("original_url", "")
+        if not url:
+            return "failed"
+        data = download_url(url)
+        if data is None:
+            return "failed"
+
+    r2_url = upload_bytes(s3, key, data, content_type_for(ext))
+    item["r2_url"] = r2_url
+    return "uploaded"
+
+
+def upload_source(s3, source_name: str, workers: int = DEFAULT_WORKERS) -> int:
+    """Upload media for a source using a thread pool. Returns count uploaded."""
     manifest = resolve_manifest(s3, source_name)
     if manifest is None:
         print(f"  No manifest found for {source_name} (local or R2).")
@@ -175,71 +220,73 @@ def upload_source(s3, source_name: str) -> int:
         print(f"  All {len(items)} items already uploaded")
         return 0
 
-    print(f"  {len(to_upload)} items to upload ({len(items) - len(to_upload)} already done)")
+    previously_done = len(items) - len(to_upload)
+    print(f"  {len(to_upload)} to upload ({previously_done} already done, {len(items)} total)")
+    print(f"  Using {workers} workers")
 
     uploaded = 0
     skipped = 0
     failed = 0
+    lock = threading.Lock()
     start = time.time()
     since_last_sync = 0
 
-    for item in items:
-        # Already uploaded
-        if item.get("r2_url"):
-            continue
-
-        item_id = item["id"]
-        fmt = item.get("format", "gif")
-        ext = fmt if fmt in ("gif", "mp4", "webm") else "gif"
-        key = f"sources/{source_name}/media/{item_id}.{ext}"
-
-        # Check R2 directly (in case manifest is stale)
-        if object_exists(s3, key):
-            item["r2_url"] = get_public_url(key)
+    def on_result(result: str):
+        nonlocal uploaded, skipped, failed, since_last_sync
+        if result == "uploaded":
+            uploaded += 1
+            since_last_sync += 1
+        elif result == "skipped":
             skipped += 1
             since_last_sync += 1
         else:
-            # Try local cache first, then stream from original URL
-            data = None
-            local_file = item.get("local_file")
-            if local_file:
-                local_path = SOURCES_DIR / source_name / local_file
-                if local_path.exists():
-                    data = local_path.read_bytes()
+            failed += 1
 
-            if data is None:
-                url = item.get("original_url", "")
-                if not url:
-                    print(f"  No URL or local file for {item_id}", file=sys.stderr)
-                    failed += 1
-                    continue
-                data = download_url(url)
-                if data is None:
-                    failed += 1
-                    continue
+    # Each thread gets its own S3 client to avoid connection pool contention
+    thread_local = threading.local()
 
-            r2_url = upload_bytes(s3, key, data, content_type_for(ext))
-            item["r2_url"] = r2_url
-            uploaded += 1
-            since_last_sync += 1
+    def get_thread_s3():
+        if not hasattr(thread_local, "s3"):
+            thread_local.s3 = get_s3_client()
+        return thread_local.s3
 
-        # Periodically sync manifest
-        if since_last_sync >= MANIFEST_SYNC_INTERVAL:
-            save_manifest_local(source_name, manifest)
-            save_manifest_r2(s3, source_name, manifest)
-            since_last_sync = 0
+    def worker(item):
+        s3_t = get_thread_s3()
+        try:
+            return process_item(s3_t, source_name, item)
+        except Exception:
+            return "failed"
 
-        done = uploaded + skipped + failed
-        if done % 5 == 0 or done == len(to_upload):
-            elapsed = time.time() - start
-            rate = done / elapsed if elapsed > 0 else 0
-            print(f"\r  [{source_name}] {uploaded} uploaded, {skipped} already on R2, "
-                  f"{failed} failed, {done}/{len(to_upload)} ({rate:.1f}/sec)",
-                  end="", flush=True)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(worker, item): item for item in to_upload}
+
+        for future in as_completed(futures):
+            result = future.result()
+            with lock:
+                on_result(result)
+
+                done = uploaded + skipped + failed
+                total_on_r2 = previously_done + uploaded + skipped
+
+                # Periodic local save for crash recovery
+                if since_last_sync >= MANIFEST_SYNC_INTERVAL:
+                    save_manifest_local(source_name, manifest)
+                    since_last_sync = 0
+
+                if done % 25 == 0 or done == len(to_upload):
+                    elapsed = time.time() - start
+                    rate = done / elapsed if elapsed > 0 else 0
+                    fail_str = f", {failed} failed" if failed else ""
+                    print(f"\r  [{source_name}] {total_on_r2}/{len(items)} on R2 "
+                          f"(+{uploaded + skipped} this run{fail_str}) {rate:.1f}/sec",
+                          end="", flush=True)
 
     # Final sync
     save_manifest_local(source_name, manifest)
-    save_manifest_r2(s3, source_name, manifest)
+    try:
+        save_manifest_r2(s3, source_name, manifest)
+    except Exception as e:
+        print(f"\n  Warning: final R2 manifest sync failed ({e}), local saved", file=sys.stderr)
     print()
     return uploaded
 
@@ -259,6 +306,7 @@ def main():
     parser = argparse.ArgumentParser(description="Upload source media to Cloudflare R2")
     parser.add_argument("--source", help="Upload media for a specific source")
     parser.add_argument("--all-sources", action="store_true", help="Upload all sources with manifests")
+    parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS, help=f"Concurrent uploads (default {DEFAULT_WORKERS})")
     args = parser.parse_args()
 
     if not any([args.source, args.all_sources]):
@@ -274,7 +322,7 @@ def main():
 
     if args.source:
         print(f"Uploading source: {args.source}")
-        count = upload_source(s3, args.source)
+        count = upload_source(s3, args.source, workers=args.workers)
         print(f"Uploaded {count} files for {args.source}")
 
     if args.all_sources:
@@ -286,7 +334,7 @@ def main():
         total = 0
         for name in sources:
             print(f"\n=== {name} ===")
-            total += upload_source(s3, name)
+            total += upload_source(s3, name, workers=args.workers)
         print(f"\nTotal uploaded: {total}")
 
 

@@ -10,9 +10,12 @@ Reads the TSV (URL + description per line), generates manifest items in the
 standard format. Does NOT download media — that's handled by
 pipeline/upload_r2.py which streams directly to R2.
 
+If the TSV isn't found locally, it's downloaded automatically from GitHub.
+
 Usage:
-    uv run sources/tgif/scrape.py --tsv ~/Documents/antfly/datasets/TGIF-Release/data/tgif-v1.0.tsv
-    uv run sources/tgif/scrape.py --tsv path/to/tgif-v1.0.tsv --limit 100
+    uv run sources/tgif/scrape.py
+    uv run sources/tgif/scrape.py --limit 100
+    uv run sources/tgif/scrape.py --tsv path/to/tgif-v1.0.tsv
 """
 
 import argparse
@@ -21,11 +24,13 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.request import urlopen, Request
 
 SOURCE_NAME = "tgif"
 SOURCE_DIR = Path(__file__).parent
 MANIFEST_PATH = SOURCE_DIR / "manifest.json"
-DEFAULT_TSV = os.path.expanduser("~/Documents/antfly/datasets/TGIF-Release/data/tgif-v1.0.tsv")
+DEFAULT_TSV = SOURCE_DIR / "tgif-v1.0.tsv"
+TSV_URL = "https://raw.githubusercontent.com/raingo/TGIF-Release/master/data/tgif-v1.0.tsv"
 
 
 def fix_tumblr_url(url: str) -> str:
@@ -67,10 +72,15 @@ def main():
     parser.add_argument("--force", action="store_true", help="Re-read TSV even if manifest exists")
     args = parser.parse_args()
 
-    if not Path(args.tsv).exists():
-        print(f"Error: TSV file not found at {args.tsv}")
-        print("Set --tsv to the path to tgif-v1.0.tsv")
-        raise SystemExit(1)
+    tsv_path = Path(args.tsv)
+
+    if not tsv_path.exists():
+        print(f"TSV not found at {tsv_path}, downloading from GitHub...")
+        req = Request(TSV_URL, headers={"User-Agent": "Mozilla/5.0"})
+        with urlopen(req) as resp:
+            tsv_path.parent.mkdir(parents=True, exist_ok=True)
+            tsv_path.write_bytes(resp.read())
+        print(f"  Saved to {tsv_path}")
 
     manifest = load_manifest()
     existing_urls = {item["original_url"] for item in manifest["items"]}
@@ -79,9 +89,9 @@ def main():
         print(f"Manifest already exists with {len(manifest['items'])} items (use --force to re-read)")
         return
 
-    print(f"Reading TGIF dataset from {args.tsv}...")
+    print(f"Reading TGIF dataset from {tsv_path}...")
     added = 0
-    with open(args.tsv) as f:
+    with open(tsv_path) as f:
         for line in f:
             parts = line.strip().split("\t", 1)
             if len(parts) != 2:
