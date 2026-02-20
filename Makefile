@@ -17,7 +17,7 @@ DESCRIBE_WORKERS ?= 20
 # Sources
 SOURCES_DIR := sources
 
-.PHONY: help setup scrape upload describe describe-source ingest ingest-source pipeline status web web-remote web-install web-build test lint clean
+.PHONY: help setup scrape upload describe describe-source ingest ingest-source pipeline status web web-remote web-install web-build test lint clean test-prompt describe-r2
 
 help:
 	@echo "GIF Picker - Available targets:"
@@ -33,6 +33,11 @@ help:
 	@echo "  pipeline SRC=X         - Scrape + upload only"
 	@echo "  pipeline SRC=X DESCRIBE=1 - Full pipeline (scrape+upload+describe+ingest)"
 	@echo "  status                 - Show pipeline status for all sources"
+	@echo ""
+	@echo ""
+	@echo "  --- Image-to-Text Pipeline (Gemini descriptions) ---"
+	@echo "  test-prompt N=10       - Quick prompt iteration test (N GIFs from local TGIF)"
+	@echo "  describe-r2 N=100      - Generate descriptions from R2 bucket"
 	@echo ""
 	@echo "  --- Setup ---"
 	@echo "  setup                  - Install all pipeline dependencies (Playwright, etc.)"
@@ -60,10 +65,10 @@ scrape:
 
 upload:
 	@test -n "$(SRC)" || (echo "Usage: make upload SRC=<source_name>" && exit 1)
-	uv run pipeline/upload_r2.py --source $(SRC)
+	uv run ingest/save-to-r2/upload_r2.py --source $(SRC)
 
 upload-all:
-	uv run pipeline/upload_r2.py --all-sources
+	uv run ingest/save-to-r2/upload_r2.py --all-sources
 
 describe:
 	@test -n "$(SRC)" || (echo "Usage: make describe SRC=<source_name>" && exit 1)
@@ -74,14 +79,14 @@ describe-all:
 
 ingest:
 	@test -n "$(SRC)" || (echo "Usage: make ingest SRC=<source_name>" && exit 1)
-	uv run pipeline/ingest.py \
+	uv run ingest/embed-text-descriptions/embed.py \
 		--source $(SRC) \
 		--url "$(ANTFLY_URL)" \
 		--table "$(INGEST_TABLE)" \
 		--batch-size $(INGEST_BATCH_SIZE)
 
 ingest-all:
-	uv run pipeline/ingest.py \
+	uv run ingest/embed-text-descriptions/embed.py \
 		--all-sources \
 		--url "$(ANTFLY_URL)" \
 		--table "$(INGEST_TABLE)" \
@@ -141,3 +146,42 @@ lint:
 
 clean:
 	rm -rf web/dist
+
+# ============================================================
+# Image-to-Text Pipeline (direct R2 access)
+# ============================================================
+
+# Path to TGIF dataset TSV file (for local testing)
+TGIF_TSV ?= $(HOME)/Documents/antfly/datasets/TGIF-Release/data/tgif-v1.0.tsv
+N ?= 100
+
+# Quick prompt iteration test (processes N GIFs from local TGIF)
+test-prompt:
+	@if [ ! -f "$(TGIF_TSV)" ]; then \
+		echo "Error: TGIF dataset not found at $(TGIF_TSV)"; \
+		exit 1; \
+	fi
+	@mkdir -p ingest/image-to-text/output
+	uv run ingest/image-to-text/describe.py \
+		--source tgif \
+		--tsv "$(TGIF_TSV)" \
+		--output "ingest/image-to-text/output/test_descriptions.jsonl" \
+		--prompt "ingest/image-to-text/prompt.txt" \
+		--workers 5 \
+		--limit $(N)
+	@echo ""
+	@echo "=== Sample output (first item) ==="
+	@head -1 ingest/image-to-text/output/test_descriptions.jsonl | python3 -m json.tool
+
+# Generate descriptions from R2 bucket
+describe-r2:
+	@test -n "$(R2_BUCKET)" || (echo "Error: R2_BUCKET not set" && exit 1)
+	@mkdir -p ingest/image-to-text/output
+	uv run ingest/image-to-text/describe.py \
+		--source r2 \
+		--r2-bucket "$(R2_BUCKET)" \
+		--output "ingest/image-to-text/output/descriptions.jsonl" \
+		--prompt "ingest/image-to-text/prompt.txt" \
+		--workers $(DESCRIBE_WORKERS) \
+		--limit $(N) \
+		--resume

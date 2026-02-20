@@ -19,10 +19,10 @@ Bucket path structure:
   sources/{source_name}/media/{item_id}.{ext}
 
 Usage:
-    uv run pipeline/upload_r2.py --source kidmograph
-    uv run pipeline/upload_r2.py --source tgif
-    uv run pipeline/upload_r2.py --source tgif --workers 20
-    uv run pipeline/upload_r2.py --all-sources
+    uv run ingest/save-to-r2/upload_r2.py --source kidmograph
+    uv run ingest/save-to-r2/upload_r2.py --source tgif
+    uv run ingest/save-to-r2/upload_r2.py --source tgif --workers 20
+    uv run ingest/save-to-r2/upload_r2.py --all-sources
 """
 
 import argparse
@@ -43,7 +43,7 @@ from botocore.exceptions import ClientError
 load_dotenv()
 
 # Config
-SOURCES_DIR = Path(__file__).parent.parent / "sources"
+SOURCES_DIR = Path(__file__).parent.parent.parent / "sources"
 BUCKET_NAME = "honeycomb-media"
 MANIFEST_SYNC_INTERVAL = 100  # sync manifest to R2 every N completions
 DEFAULT_WORKERS = 10

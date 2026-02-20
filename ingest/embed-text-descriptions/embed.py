@@ -12,10 +12,10 @@ Creates a table with two vector indexes:
   - summarizer_embeddings: Antfly fetches the GIF, summarizes via Gemini, embeds result
 
 Usage:
-    uv run pipeline/ingest.py --jsonl gif_descriptions.jsonl --attribution "TGIF dataset"
-    uv run pipeline/ingest.py --source kidmograph
-    uv run pipeline/ingest.py --all-sources
-    uv run pipeline/ingest.py --jsonl gif_descriptions.jsonl --limit 100
+    uv run ingest/embed-text-descriptions/embed.py --jsonl gif_descriptions.jsonl --attribution "TGIF dataset"
+    uv run ingest/embed-text-descriptions/embed.py --source kidmograph
+    uv run ingest/embed-text-descriptions/embed.py --all-sources
+    uv run ingest/embed-text-descriptions/embed.py --jsonl gif_descriptions.jsonl --limit 100
 """
 
 import argparse
@@ -37,7 +37,7 @@ TABLE_NAME = os.environ.get("INGEST_TABLE", "tgif_gifs_text")
 BATCH_SIZE = 50
 EMBED_MODEL = "BAAI/bge-small-en-v1.5"
 EMBED_DIMENSION = 384
-SOURCES_DIR = Path(__file__).parent.parent / "sources"
+SOURCES_DIR = Path(__file__).parent.parent.parent / "sources"
 
 
 def combined_text(desc: dict) -> str:
