@@ -15,3 +15,10 @@ pipeline/__pycache__/
 
 # Environment variables (credentials)
 .env
+
+# Benchmark artifacts (generated on VM)
+benchmark/fixtures/
+benchmark/results/
+
+# Benchmark run results (large JSONL files, regenerable)
+benchmark/runs/*/results/

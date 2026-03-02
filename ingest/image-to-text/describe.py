@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["google-genai", "Pillow", "boto3"]
+# dependencies = ["google-genai", "google-cloud-aiplatform", "Pillow", "boto3", "httpx"]
 # ///
 """
 GIF description pipeline - generates rich text descriptions using Gemini.
@@ -249,6 +249,50 @@ class LocalSource(GifSource):
             return None
 
 
+class ManifestSource(GifSource):
+    """Load a fixed list of GIFs from a JSON manifest, downloading from R2."""
+
+    def __init__(self, manifest_path: Path, bucket: str, endpoint_url: str = None):
+        import boto3
+        self.manifest_path = Path(manifest_path)
+        if not self.manifest_path.exists():
+            raise FileNotFoundError(f"Manifest not found: {manifest_path}")
+        self.bucket = bucket
+
+        self.s3 = boto3.client(
+            "s3",
+            endpoint_url=endpoint_url or os.environ.get("R2_ENDPOINT_URL"),
+            aws_access_key_id=os.environ.get("R2_ACCESS_KEY_ID"),
+            aws_secret_access_key=os.environ.get("R2_SECRET_ACCESS_KEY"),
+        )
+
+        with open(self.manifest_path) as f:
+            self.items_data = json.load(f)
+
+    def list_items(self, limit: int = 0) -> Iterator[GifItem]:
+        """Yield GifItems from manifest."""
+        count = 0
+        for entry in self.items_data:
+            yield GifItem(
+                id=entry["id"],
+                source_path=entry["source_path"],
+                dataset=entry.get("dataset", "unknown"),
+                attribution=entry.get("attribution", ""),
+            )
+            count += 1
+            if limit and count >= limit:
+                break
+
+    def download(self, item: GifItem) -> bytes | None:
+        """Download from R2 by key."""
+        try:
+            response = self.s3.get_object(Bucket=self.bucket, Key=item.source_path)
+            return response["Body"].read()
+        except Exception as e:
+            print(f"  R2 download error: {e}", file=sys.stderr)
+            return None
+
+
 # =============================================================================
 # Gemini API Client - Abstracted for future Vertex AI support
 # =============================================================================
@@ -307,15 +351,107 @@ class GoogleGenAIClient(GeminiClient):
 class VertexAIClient(GeminiClient):
     """Client using Vertex AI SDK (for GCP deployment)."""
 
-    def __init__(self, project: str = None, location: str = "us-central1", model: str = "gemini-2.0-flash-lite"):
-        # Placeholder for future implementation
-        raise NotImplementedError(
-            "Vertex AI client not yet implemented. "
-            "Set up GCP project and install google-cloud-aiplatform."
-        )
+    def __init__(self, project: str = None, location: str = "us-central1", model: str = "gemini-2.0-flash-001"):
+        import vertexai
+        from vertexai.generative_models import GenerativeModel
+
+        self.project = project or os.environ.get("GOOGLE_CLOUD_PROJECT", "honeycomb-488503")
+        self.location = location
+        self.model_name = model
+
+        vertexai.init(project=self.project, location=self.location)
+        self.model = GenerativeModel(self.model_name)
 
     def generate(self, prompt: str, images: list[bytes]) -> str | None:
-        pass
+        """Generate text from prompt and images."""
+        from vertexai.generative_models import Part, Image as VertexImage
+
+        parts = [Part.from_text(prompt)]
+        for img_data in images:
+            parts.append(Part.from_image(VertexImage.from_bytes(img_data)))
+
+        try:
+            response = self.model.generate_content(parts)
+            return response.text
+        except Exception as e:
+            print(f"  Vertex AI error: {e}", file=sys.stderr)
+            return None
+
+
+class TermiteClient(GeminiClient):
+    """Client using local Termite for Gemma 3 inference."""
+
+    def __init__(self, url: str = "http://localhost:11433", model: str = "onnxruntime/Gemma-3-ONNX"):
+        import httpx
+        self.httpx = httpx
+        self.url = url
+        self.model = model
+
+    def generate(self, prompt: str, images: list[bytes]) -> str | None:
+        """Generate text from prompt and images using Termite's OpenAI-compatible API."""
+        import base64
+
+        # Build multimodal message content (OpenAI vision format)
+        content = [{"type": "text", "text": prompt}]
+        for img_data in images:
+            b64 = base64.b64encode(img_data).decode()
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{b64}"}
+            })
+
+        try:
+            resp = self.httpx.post(
+                f"{self.url}/api/generate",
+                json={
+                    "model": self.model,
+                    "messages": [{"role": "user", "content": content}],
+                    "max_tokens": 2048,
+                },
+                timeout=1800.0  # 30 min timeout for multi-frame CPU vision inference
+            )
+            resp.raise_for_status()
+            return resp.json()["choices"][0]["message"]["content"]
+        except Exception as e:
+            print(f"  Termite error: {e}", file=sys.stderr)
+            return None
+
+
+class OllamaClient(GeminiClient):
+    """Client using local Ollama for Gemma 3 inference."""
+
+    def __init__(self, url: str = "http://localhost:11434", model: str = "gemma3:4b-it-qat"):
+        import httpx
+        self.httpx = httpx
+        self.url = url
+        self.model = model
+
+    def generate(self, prompt: str, images: list[bytes]) -> str | None:
+        """Generate text from prompt and images using Ollama's API."""
+        import base64
+
+        # Build message with images (Ollama format)
+        message = {
+            "role": "user",
+            "content": prompt,
+            "images": [base64.b64encode(img).decode() for img in images]
+        }
+
+        try:
+            resp = self.httpx.post(
+                f"{self.url}/api/chat",
+                json={
+                    "model": self.model,
+                    "messages": [message],
+                    "stream": False,
+                },
+                timeout=300.0  # Longer timeout for CPU inference
+            )
+            resp.raise_for_status()
+            return resp.json()["message"]["content"]
+        except Exception as e:
+            print(f"  Ollama error: {e}", file=sys.stderr)
+            return None
 
 
 # =============================================================================
@@ -328,7 +464,10 @@ def extract_frames(gif_data: bytes, num_frames: int = NUM_FRAMES, max_dim: int =
     n_frames = getattr(img, "n_frames", 1)
 
     # Pick frame indices: evenly spaced including first and last
-    if n_frames <= num_frames:
+    if num_frames == 1:
+        # Single frame: pick middle frame for best representation
+        indices = [n_frames // 2]
+    elif n_frames <= num_frames:
         indices = list(range(n_frames))
     else:
         indices = [round(i * (n_frames - 1) / (num_frames - 1)) for i in range(num_frames)]
@@ -354,10 +493,35 @@ def extract_frames(gif_data: bytes, num_frames: int = NUM_FRAMES, max_dim: int =
 def clean_json_response(text: str) -> str:
     """Strip markdown fences and trailing garbage from JSON responses."""
     text = text.strip()
+
+    # Remove unicode spacing chars that Gemma sometimes adds (U+2581 lower one-eighth block)
+    text = text.replace("\u2581", "")
+
+    # Handle markdown code fences (Gemma sometimes outputs ```json...`````` with extra backticks)
     if text.startswith("```"):
         lines = text.split("\n")
-        # Remove first line (```json) and last line (```)
-        text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+        # Remove first line (```json or ```)
+        lines = lines[1:]
+        # Remove trailing lines that are empty or just backticks
+        while lines and (not lines[-1].strip() or lines[-1].strip().startswith("`")):
+            lines = lines[:-1]
+        text = "\n".join(lines)
+
+    # Also handle case where backticks appear after closing brace on same line or subsequent lines
+    # Find the last } and truncate there
+    if "{" in text:
+        brace_count = 0
+        last_close = -1
+        for i, c in enumerate(text):
+            if c == "{":
+                brace_count += 1
+            elif c == "}":
+                brace_count -= 1
+                if brace_count == 0:
+                    last_close = i
+        if last_close > 0:
+            text = text[:last_close + 1]
+
     return text.strip()
 
 
@@ -366,6 +530,7 @@ def process_item(
     source: GifSource,
     item: GifItem,
     prompt: str,
+    num_frames: int = NUM_FRAMES,
     retries: int = 1
 ) -> dict | None:
     """Process a single GIF item and return description dict."""
@@ -376,7 +541,7 @@ def process_item(
 
     # Extract frames
     try:
-        frames = extract_frames(gif_data)
+        frames = extract_frames(gif_data, num_frames=num_frames)
     except Exception as e:
         print(f"  Frame extraction error: {e}", file=sys.stderr)
         return None
@@ -417,13 +582,15 @@ def process_item(
 
 def main():
     parser = argparse.ArgumentParser(description="V2 GIF description pipeline")
-    parser.add_argument("--source", choices=["tgif", "r2", "local"], default="tgif",
+    parser.add_argument("--source", choices=["tgif", "r2", "local", "manifest"], default="tgif",
                         help="Data source type")
     parser.add_argument("--tsv", type=Path, default=DEFAULT_TSV,
                         help="Path to TGIF TSV file (for tgif source)")
     parser.add_argument("--r2-bucket", help="R2 bucket name (for r2 source)")
     parser.add_argument("--r2-prefix", default="", help="R2 key prefix filter")
     parser.add_argument("--local-dir", type=Path, help="Local directory (for local source)")
+    parser.add_argument("--manifest-file", type=Path,
+                        help="Path to manifest JSON file (for manifest source)")
     parser.add_argument("--limit", type=int, default=100,
                         help="Limit items to process (0=all)")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_DIR / "descriptions.jsonl",
@@ -434,8 +601,24 @@ def main():
                         help="Resume from checkpoint")
     parser.add_argument("--workers", type=int, default=20,
                         help="Number of concurrent workers")
-    parser.add_argument("--model", default="gemini-2.0-flash-lite",
-                        help="Gemini model name")
+    parser.add_argument("--frames", type=int, default=NUM_FRAMES,
+                        help=f"Number of frames to extract from each GIF (default: {NUM_FRAMES})")
+    parser.add_argument("--model", default="gemini-2.0-flash-001",
+                        help="Model name (Gemini for vertex/genai, Gemma for termite)")
+    parser.add_argument("--backend", choices=["vertex", "genai", "termite", "ollama"], default="vertex",
+                        help="API backend: vertex (GCP), genai (API key), termite (local Gemma via Termite), or ollama (local Gemma via Ollama)")
+    parser.add_argument("--project", default="honeycomb-488503",
+                        help="GCP project ID (for vertex backend)")
+    parser.add_argument("--location", default="us-central1",
+                        help="GCP region (for vertex backend)")
+    parser.add_argument("--termite-url", default="http://localhost:11433",
+                        help="Termite API URL (for termite backend)")
+    parser.add_argument("--termite-model", default="onnxruntime/Gemma-3-ONNX",
+                        help="Termite model name (for termite backend)")
+    parser.add_argument("--ollama-url", default="http://localhost:11434",
+                        help="Ollama API URL (for ollama backend)")
+    parser.add_argument("--ollama-model", default="gemma3:4b-it-qat",
+                        help="Ollama model name (for ollama backend)")
     args = parser.parse_args()
 
     # Ensure output directory exists
@@ -465,10 +648,27 @@ def main():
             sys.exit(1)
         source = LocalSource(args.local_dir)
         print(f"Using local source: {args.local_dir}")
+    elif args.source == "manifest":
+        if not args.manifest_file:
+            print("Error: --manifest-file required for manifest source", file=sys.stderr)
+            sys.exit(1)
+        bucket = args.r2_bucket or "honeycomb-media"
+        source = ManifestSource(args.manifest_file, bucket)
+        print(f"Using manifest source: {args.manifest_file} ({len(source.items_data)} items)")
 
-    # Initialize Gemini client
-    client = GoogleGenAIClient(model=args.model)
-    print(f"Using model: {args.model}")
+    # Initialize client based on backend
+    if args.backend == "vertex":
+        client = VertexAIClient(project=args.project, location=args.location, model=args.model)
+        print(f"Using Vertex AI: {args.project}/{args.location}, model: {args.model}")
+    elif args.backend == "termite":
+        client = TermiteClient(url=args.termite_url, model=args.termite_model)
+        print(f"Using Termite: {args.termite_url}, model: {args.termite_model}")
+    elif args.backend == "ollama":
+        client = OllamaClient(url=args.ollama_url, model=args.ollama_model)
+        print(f"Using Ollama: {args.ollama_url}, model: {args.ollama_model}")
+    else:
+        client = GoogleGenAIClient(model=args.model)
+        print(f"Using Google GenAI, model: {args.model}")
 
     # Load processing state
     state = ProcessingState()
@@ -500,7 +700,7 @@ def main():
     with open(args.output, output_mode) as out:
         with ThreadPoolExecutor(max_workers=args.workers) as executor:
             futures = {
-                executor.submit(process_item, client, source, item, prompt): item
+                executor.submit(process_item, client, source, item, prompt, args.frames): item
                 for item in to_process
             }
 
