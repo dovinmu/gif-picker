@@ -150,16 +150,18 @@ def flush_batch(client: httpx.Client, table: str, batch: dict) -> None:
     resp.raise_for_status()
 
 
-def build_doc(desc: dict, default_attribution: str, r2_urls: dict | None = None) -> dict:
+def build_doc(desc: dict, default_attribution: str, r2_urls: dict | None = None, media_base_url: str = "") -> dict:
     """Build an Antfly document from a description record."""
     url = desc.get("url", "")
 
-    # Use R2 URL if available
+    # Use R2 URL if available, or construct from source_path
     gif_url = url
     if r2_urls and url in r2_urls:
         gif_url = r2_urls[url]
     elif desc.get("r2_url"):
         gif_url = desc["r2_url"]
+    elif desc.get("source_path") and media_base_url:
+        gif_url = f"{media_base_url}/{desc['source_path']}"
 
     action = desc.get("action", "")
     if isinstance(action, list):
@@ -185,7 +187,8 @@ def build_doc(desc: dict, default_attribution: str, r2_urls: dict | None = None)
 
 
 def ingest_jsonl(client: httpx.Client, table: str, jsonl_path: str,
-                 attribution: str, limit: int, r2_urls: dict | None = None) -> int:
+                 attribution: str, limit: int, r2_urls: dict | None = None,
+                 media_base_url: str = "") -> int:
     """Ingest documents from a JSONL file. Returns count imported."""
     batch: dict = {}
     imported = 0
@@ -198,7 +201,7 @@ def ingest_jsonl(client: httpx.Client, table: str, jsonl_path: str,
         for line in f:
             desc = json.loads(line)
             did = doc_id(desc)
-            doc = build_doc(desc, attribution, r2_urls)
+            doc = build_doc(desc, attribution, r2_urls, media_base_url)
             batch[did] = doc
 
             if len(batch) >= BATCH_SIZE:
@@ -258,13 +261,11 @@ def main():
     parser.add_argument("--skip-create", action="store_true", help="Skip table creation")
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE, help=f"Batch size (default: {BATCH_SIZE})")
     parser.add_argument("--r2-urls", help="Path to R2 URL mapping JSON (from upload_r2.py)")
+    parser.add_argument("--media-base-url", default="", help="Base URL for media (e.g., /media or https://cdn.example.com)")
     args = parser.parse_args()
 
     if not any([args.jsonl, args.source, args.all_sources]):
         parser.error("Specify --jsonl PATH, --source NAME, or --all-sources")
-
-    global BATCH_SIZE
-    BATCH_SIZE = args.batch_size
 
     client = httpx.Client(base_url=args.url, timeout=30.0)
 
@@ -280,7 +281,7 @@ def main():
         print(f"Loaded {len(r2_urls)} R2 URL mappings")
 
     if args.jsonl:
-        ingest_jsonl(client, args.table, args.jsonl, args.attribution, args.limit, r2_urls)
+        ingest_jsonl(client, args.table, args.jsonl, args.attribution, args.limit, r2_urls, args.media_base_url)
 
     if args.source:
         sources = find_sources(args.source)
@@ -290,7 +291,7 @@ def main():
         for source_dir in sources:
             jsonl_path = str(source_dir / "descriptions.jsonl")
             print(f"\n=== {source_dir.name} ===")
-            ingest_jsonl(client, args.table, jsonl_path, args.attribution, args.limit, r2_urls)
+            ingest_jsonl(client, args.table, jsonl_path, args.attribution, args.limit, r2_urls, args.media_base_url)
 
     if args.all_sources:
         sources = find_sources()
@@ -302,7 +303,7 @@ def main():
         for source_dir in sources:
             jsonl_path = str(source_dir / "descriptions.jsonl")
             print(f"\n=== {source_dir.name} ===")
-            total += ingest_jsonl(client, args.table, jsonl_path, args.attribution, args.limit, r2_urls)
+            total += ingest_jsonl(client, args.table, jsonl_path, args.attribution, args.limit, r2_urls, args.media_base_url)
         print(f"\nTotal ingested: {total}")
 
 
