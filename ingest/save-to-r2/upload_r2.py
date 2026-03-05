@@ -101,7 +101,8 @@ def download_url(url: str, timeout: int = 30) -> bytes | None:
             if "assets.tumblr.com/images/media_violation/" in resp.url:
                 return None
             return resp.read()
-    except Exception:
+    except Exception as e:
+        print(f"  Download failed for {url[:80]}: {e}", file=sys.stderr)
         return None
 
 
@@ -254,7 +255,8 @@ def upload_source(s3, source_name: str, workers: int = DEFAULT_WORKERS) -> int:
         s3_t = get_thread_s3()
         try:
             return process_item(s3_t, source_name, item)
-        except Exception:
+        except Exception as e:
+            print(f"\n  Error uploading {item.get('id', '?')}: {e}", file=sys.stderr)
             return "failed"
 
     with ThreadPoolExecutor(max_workers=workers) as pool:

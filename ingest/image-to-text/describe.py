@@ -475,13 +475,13 @@ def extract_frames(gif_data: bytes, num_frames: int = NUM_FRAMES, max_dim: int =
     frames = []
     for idx in indices:
         img.seek(idx)
-        frame = img.convert("RGBA")
+        frame = img.convert("RGB")
 
         # Resize if too large
         w, h = frame.size
         if max(w, h) > max_dim:
             scale = max_dim / max(w, h)
-            frame = frame.resize((round(w * scale), round(h * scale)), Image.LANCZOS)
+            frame = frame.resize((round(w * scale), round(h * scale)), Image.BILINEAR)
 
         buf = io.BytesIO()
         frame.save(buf, format="PNG")

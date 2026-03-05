@@ -207,9 +207,9 @@ def ingest_jsonl(client: httpx.Client, table: str, jsonl_path: str,
             if len(batch) >= BATCH_SIZE:
                 try:
                     flush_batch(client, table, batch)
+                    imported += len(batch)
                 except httpx.HTTPError as e:
-                    print(f"\nWarning: batch insert failed: {e}", file=sys.stderr)
-                imported += len(batch)
+                    print(f"\nWarning: batch insert failed ({len(batch)} docs lost): {e}", file=sys.stderr)
                 batch = {}
 
                 elapsed = time.time() - start
@@ -224,9 +224,9 @@ def ingest_jsonl(client: httpx.Client, table: str, jsonl_path: str,
     if batch:
         try:
             flush_batch(client, table, batch)
+            imported += len(batch)
         except httpx.HTTPError as e:
-            print(f"\nWarning: final batch insert failed: {e}", file=sys.stderr)
-        imported += len(batch)
+            print(f"\nWarning: final batch insert failed ({len(batch)} docs lost): {e}", file=sys.stderr)
 
     elapsed = time.time() - start
     rate = imported / elapsed if elapsed > 0 else 0
