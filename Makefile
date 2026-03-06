@@ -23,7 +23,7 @@ DESCRIBE_OUTPUT_DIR := ingest/image-to-text/output
 # Sources
 SOURCES_DIR := sources
 
-.PHONY: help setup scrape upload describe describe-source ingest ingest-source pipeline status web web-remote web-install web-build test lint clean test-prompt describe-r2 compare-models review
+.PHONY: help setup scrape upload describe describe-source ingest ingest-source ingest-r2 pipeline status web web-remote web-install web-build test lint clean test-prompt describe-r2 compare-models review
 
 help:
 	@echo "GIF Picker - Available targets:"
@@ -46,6 +46,7 @@ help:
 	@echo "  describe-r2 N=100      - Generate descriptions from R2 bucket"
 	@echo "  describe-r2 MODEL=X    - Use a specific model"
 	@echo "  compare-models N=20 MODELS=\"model1,model2\" - Compare models side-by-side"
+	@echo "  ingest-r2              - Ingest describe-r2 output into Antfly"
 	@echo "  review                 - Regenerate review.md from description files"
 	@echo ""
 	@echo "  --- Setup ---"
@@ -100,6 +101,18 @@ ingest-all:
 		--url "$(ANTFLY_URL)" \
 		--table "$(INGEST_TABLE)" \
 		--batch-size $(INGEST_BATCH_SIZE)
+
+# Ingest descriptions from describe-r2 output into Antfly
+MEDIA_BASE_URL ?= https://media.honeycomb.antfly.io
+ingest-r2:
+	@test -f "$(DESCRIBE_OUTPUT_DIR)/descriptions-$(MODEL).jsonl" || \
+		(echo "Error: $(DESCRIBE_OUTPUT_DIR)/descriptions-$(MODEL).jsonl not found. Run make describe-r2 first." && exit 1)
+	uv run ingest/embed-text-descriptions/embed.py \
+		--jsonl "$(DESCRIBE_OUTPUT_DIR)/descriptions-$(MODEL).jsonl" \
+		--url "$(ANTFLY_URL)" \
+		--table "$(INGEST_TABLE)" \
+		--batch-size $(INGEST_BATCH_SIZE) \
+		--media-base-url "$(MEDIA_BASE_URL)"
 
 pipeline:
 	@test -n "$(SRC)" || (echo "Usage: make pipeline SRC=<source_name> [DESCRIBE=1]" && exit 1)
