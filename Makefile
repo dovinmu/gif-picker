@@ -4,6 +4,10 @@
 #   - Antfly running: antfly swarm
 #   - Text embedding model: antflycli termite pull BAAI/bge-small-en-v1.5 --type embedder
 
+# Load .env file if it exists
+-include .env
+export
+
 # Antfly API URL
 ANTFLY_URL ?= http://localhost:8080/api/v1
 
@@ -13,11 +17,13 @@ INGEST_TABLE ?= tgif_gifs_text
 
 # Describe settings
 DESCRIBE_WORKERS ?= 20
+MODEL ?= gemini-3.1-flash-lite-preview
+DESCRIBE_OUTPUT_DIR := ingest/image-to-text/output
 
 # Sources
 SOURCES_DIR := sources
 
-.PHONY: help setup scrape upload describe describe-source ingest ingest-source pipeline status web web-remote web-install web-build test lint clean test-prompt describe-r2
+.PHONY: help setup scrape upload describe describe-source ingest ingest-source pipeline status web web-remote web-install web-build test lint clean test-prompt describe-r2 compare-models review
 
 help:
 	@echo "GIF Picker - Available targets:"
@@ -38,6 +44,9 @@ help:
 	@echo "  --- Image-to-Text Pipeline (Gemini descriptions) ---"
 	@echo "  test-prompt N=10       - Quick prompt iteration test (N GIFs from local TGIF)"
 	@echo "  describe-r2 N=100      - Generate descriptions from R2 bucket"
+	@echo "  describe-r2 MODEL=X    - Use a specific model"
+	@echo "  compare-models N=20 MODELS=\"model1,model2\" - Compare models side-by-side"
+	@echo "  review                 - Regenerate review.md from description files"
 	@echo ""
 	@echo "  --- Setup ---"
 	@echo "  setup                  - Install all pipeline dependencies (Playwright, etc.)"
@@ -173,15 +182,57 @@ test-prompt:
 	@echo "=== Sample output (first item) ==="
 	@head -1 ingest/image-to-text/output/test_descriptions.jsonl | python3 -m json.tool
 
-# Generate descriptions from R2 bucket
+# Generate descriptions from R2 bucket (single model)
 describe-r2:
 	@test -n "$(R2_BUCKET)" || (echo "Error: R2_BUCKET not set" && exit 1)
-	@mkdir -p ingest/image-to-text/output
+	@mkdir -p $(DESCRIBE_OUTPUT_DIR)
 	uv run ingest/image-to-text/describe.py \
 		--source r2 \
 		--r2-bucket "$(R2_BUCKET)" \
-		--output "ingest/image-to-text/output/descriptions.jsonl" \
+		--backend genai \
+		--model $(MODEL) \
+		--output "$(DESCRIBE_OUTPUT_DIR)/descriptions-$(MODEL).jsonl" \
 		--prompt "ingest/image-to-text/prompt.txt" \
 		--workers $(DESCRIBE_WORKERS) \
 		--limit $(N) \
 		--resume
+	$(MAKE) review
+
+# Generate descriptions with multiple models for comparison
+# Usage: make compare-models N=20 MODELS="gemini-3.1-flash-lite-preview,gemini-2.5-flash"
+# Models prefixed with "openrouter:" use the OpenRouter backend (e.g. openrouter:google/gemma-3-4b-it)
+compare-models:
+	@test -n "$(R2_BUCKET)" || (echo "Error: R2_BUCKET not set" && exit 1)
+	@test -n "$(MODELS)" || (echo "Usage: make compare-models N=20 MODELS=\"model1,model2\"" && exit 1)
+	@mkdir -p $(DESCRIBE_OUTPUT_DIR)
+	@for spec in $$(echo "$(MODELS)" | tr ',' ' '); do \
+		echo ""; \
+		case "$$spec" in \
+			openrouter:*) \
+				model=$${spec#openrouter:}; \
+				backend=openrouter; \
+				;; \
+			*) \
+				model=$$spec; \
+				backend=genai; \
+				;; \
+		esac; \
+		safe_name=$$(echo "$$model" | tr '/' '-'); \
+		echo "=== Running model: $$model ($$backend) ==="; \
+		uv run ingest/image-to-text/describe.py \
+			--source r2 \
+			--r2-bucket "$(R2_BUCKET)" \
+			--backend "$$backend" \
+			--model "$$model" \
+			--output "$(DESCRIBE_OUTPUT_DIR)/descriptions-$$safe_name.jsonl" \
+			--prompt "ingest/image-to-text/prompt.txt" \
+			--workers $(DESCRIBE_WORKERS) \
+			--limit $(N); \
+	done
+	$(MAKE) review
+
+# Generate review markdown from all description files
+review:
+	uv run ingest/image-to-text/review.py \
+		--input $(DESCRIBE_OUTPUT_DIR)/descriptions-*.jsonl \
+		--output "$(DESCRIBE_OUTPUT_DIR)/review.md"

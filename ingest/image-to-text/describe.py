@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["google-genai", "google-cloud-aiplatform", "Pillow", "boto3", "httpx"]
+# dependencies = ["google-genai", "google-cloud-aiplatform", "Pillow", "boto3", "httpx", "pyyaml"]
 # ///
 """
 GIF description pipeline - generates rich text descriptions using Gemini.
@@ -300,6 +300,10 @@ class ManifestSource(GifSource):
 class GeminiClient(ABC):
     """Abstract base class for Gemini API clients."""
 
+    def __init__(self):
+        self.total_input_tokens = 0
+        self.total_output_tokens = 0
+
     @abstractmethod
     def generate(self, prompt: str, images: list[bytes]) -> str | None:
         """Generate text from prompt and images."""
@@ -310,6 +314,7 @@ class GoogleGenAIClient(GeminiClient):
     """Client using google-genai SDK (current approach)."""
 
     def __init__(self, api_key: str = None, model: str = "gemini-2.0-flash-lite"):
+        super().__init__()
         from google import genai
         self.genai = genai
         self.model = model
@@ -329,23 +334,66 @@ class GoogleGenAIClient(GeminiClient):
 
         self.client = genai.Client(api_key=key)
 
-    def generate(self, prompt: str, images: list[bytes]) -> str | None:
-        """Generate text from prompt and images."""
+    def _build_contents(self, prompt: str, images: list[bytes]):
         from google.genai import types
-
         parts = [types.Part.from_text(text=prompt)]
         for img_data in images:
             parts.append(types.Part.from_bytes(data=img_data, mime_type="image/png"))
+        return [types.Content(parts=parts)]
 
+    def generate(self, prompt: str, images: list[bytes]) -> str | None:
+        """Generate text from prompt and images."""
         try:
             response = self.client.models.generate_content(
                 model=self.model,
-                contents=[types.Content(parts=parts)]
+                contents=self._build_contents(prompt, images)
             )
+            if response.usage_metadata:
+                self.total_input_tokens += response.usage_metadata.prompt_token_count or 0
+                self.total_output_tokens += response.usage_metadata.candidates_token_count or 0
             return response.text
         except Exception as e:
             print(f"  API error: {e}", file=sys.stderr)
             return None
+
+    def generate_batch(self, requests: list[tuple[str, list[bytes]]]) -> list[str | None]:
+        """Submit requests via the Batch API (50% cheaper). Returns list of responses."""
+        inline_requests = []
+        for prompt, images in requests:
+            contents = self._build_contents(prompt, images)
+            inline_requests.append({"contents": [{"parts": c.parts} for c in contents]})
+
+        print(f"  Submitting batch job ({len(inline_requests)} requests)...")
+        batch_job = self.client.batches.create(
+            model=self.model,
+            src=inline_requests,
+            config={"display_name": f"describe-{len(inline_requests)}items"},
+        )
+        print(f"  Batch job: {batch_job.name}")
+
+        completed_states = {
+            "JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED",
+            "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED",
+        }
+
+        while batch_job.state.name not in completed_states:
+            print(f"\r  Batch status: {batch_job.state.name}\033[K", end="", flush=True)
+            time.sleep(15)
+            batch_job = self.client.batches.get(name=batch_job.name)
+
+        print(f"\r  Batch status: {batch_job.state.name}\033[K")
+
+        if batch_job.state.name != "JOB_STATE_SUCCEEDED":
+            print(f"  Batch job failed: {batch_job.state.name}", file=sys.stderr)
+            return [None] * len(requests)
+
+        results = []
+        for resp in batch_job.dest.inlined_responses:
+            if resp.response and resp.response.text:
+                results.append(resp.response.text)
+            else:
+                results.append(None)
+        return results
 
 
 class VertexAIClient(GeminiClient):
@@ -451,6 +499,59 @@ class OllamaClient(GeminiClient):
             return resp.json()["message"]["content"]
         except Exception as e:
             print(f"  Ollama error: {e}", file=sys.stderr)
+            return None
+
+
+class OpenRouterClient(GeminiClient):
+    """Client using OpenRouter (OpenAI-compatible vision API)."""
+
+    def __init__(self, model: str = "google/gemma-3-4b-it", api_key: str = None):
+        super().__init__()
+        import httpx
+        self.httpx = httpx
+        self.model = model
+        if api_key:
+            self.api_key = api_key
+        elif os.environ.get("OPENROUTER_API_KEY"):
+            self.api_key = os.environ["OPENROUTER_API_KEY"]
+        else:
+            key_path = Path.home() / ".tokens/openrouter_api_key"
+            if key_path.exists():
+                self.api_key = key_path.read_text().strip().split()[0]
+            else:
+                raise ValueError("No OpenRouter API key found. Set OPENROUTER_API_KEY or create ~/.tokens/openrouter_api_key")
+
+    def generate(self, prompt: str, images: list[bytes]) -> str | None:
+        """Generate text from prompt and images using OpenRouter."""
+        import base64
+
+        content = [{"type": "text", "text": prompt}]
+        for img_data in images:
+            b64 = base64.b64encode(img_data).decode()
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{b64}"}
+            })
+
+        try:
+            resp = self.httpx.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                json={
+                    "model": self.model,
+                    "messages": [{"role": "user", "content": content}],
+                    "max_tokens": 2048,
+                },
+                timeout=120.0,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            usage = data.get("usage", {})
+            self.total_input_tokens += usage.get("prompt_tokens", 0)
+            self.total_output_tokens += usage.get("completion_tokens", 0)
+            return data["choices"][0]["message"]["content"]
+        except Exception as e:
+            print(f"  OpenRouter error: {e}", file=sys.stderr)
             return None
 
 
@@ -603,10 +704,12 @@ def main():
                         help="Number of concurrent workers")
     parser.add_argument("--frames", type=int, default=NUM_FRAMES,
                         help=f"Number of frames to extract from each GIF (default: {NUM_FRAMES})")
-    parser.add_argument("--model", default="gemini-2.0-flash-001",
+    parser.add_argument("--model", default="gemini-3.1-flash-lite-preview",
                         help="Model name (Gemini for vertex/genai, Gemma for termite)")
-    parser.add_argument("--backend", choices=["vertex", "genai", "termite", "ollama"], default="vertex",
-                        help="API backend: vertex (GCP), genai (API key), termite (local Gemma via Termite), or ollama (local Gemma via Ollama)")
+    parser.add_argument("--backend", choices=["vertex", "genai", "termite", "ollama", "openrouter"], default="vertex",
+                        help="API backend: vertex (GCP), genai (API key), termite (local Gemma), ollama (local Gemma), or openrouter")
+    parser.add_argument("--batch", action="store_true",
+                        help="Use Batch API for genai backend (50%% cheaper, async processing)")
     parser.add_argument("--project", default="honeycomb-488503",
                         help="GCP project ID (for vertex backend)")
     parser.add_argument("--location", default="us-central1",
@@ -666,6 +769,9 @@ def main():
     elif args.backend == "ollama":
         client = OllamaClient(url=args.ollama_url, model=args.ollama_model)
         print(f"Using Ollama: {args.ollama_url}, model: {args.ollama_model}")
+    elif args.backend == "openrouter":
+        client = OpenRouterClient(model=args.model)
+        print(f"Using OpenRouter, model: {args.model}")
     else:
         client = GoogleGenAIClient(model=args.model)
         print(f"Using Google GenAI, model: {args.model}")
@@ -690,58 +796,151 @@ def main():
         print("Nothing to do!")
         return
 
-    # Process with thread pool
-    lock = threading.Lock()
+    # Load model pricing config
+    import yaml
+    pricing_path = Path(__file__).parent / "models.yaml"
+    model_pricing = {}
+    if pricing_path.exists():
+        with open(pricing_path) as f:
+            models_config = yaml.safe_load(f)
+        for m in models_config.get("models", []):
+            model_pricing[m["id"]] = (m.get("input_per_m", 0), m.get("output_per_m", 0))
+
+    use_batch = args.batch and isinstance(client, GoogleGenAIClient)
+    if use_batch:
+        print("Using Batch API (50% discount)")
+
     success = 0
     failed = 0
     start = time.time()
-
     output_mode = "a" if args.resume else "w"
-    with open(args.output, output_mode) as out:
-        with ThreadPoolExecutor(max_workers=args.workers) as executor:
-            futures = {
-                executor.submit(process_item, client, source, item, prompt, args.frames): item
-                for item in to_process
-            }
 
-            for future in as_completed(futures):
-                item = futures[future]
-                result = future.result()
+    if use_batch:
+        # Batch mode: download all GIFs, extract frames, submit as one batch
+        print("Downloading and extracting frames...")
+        batch_requests = []  # (prompt, images)
+        batch_items = []     # corresponding GifItems
+        for i, item in enumerate(to_process):
+            gif_data = source.download(item)
+            if gif_data is None:
+                failed += 1
+                continue
+            try:
+                frames = extract_frames(gif_data, num_frames=args.frames)
+            except Exception as e:
+                print(f"  Frame extraction error for {item.id}: {e}", file=sys.stderr)
+                failed += 1
+                continue
+            batch_requests.append((prompt, frames))
+            batch_items.append(item)
+            if (i + 1) % 10 == 0:
+                print(f"  Prepared {i + 1}/{len(to_process)}")
 
-                with lock:
-                    if result:
-                        out.write(json.dumps(result) + "\n")
-                        out.flush()
-                        success += 1
-                        state.mark_processed(item.id)
-                    else:
-                        failed += 1
+        print(f"Prepared {len(batch_requests)} requests, submitting batch...")
+        responses = client.generate_batch(batch_requests)
 
-                    done = success + failed
-                    if done % 10 == 0 or done == len(to_process):
-                        elapsed = time.time() - start
-                        rate = done / elapsed if elapsed > 0 else 0
-                        # Save state periodically
-                        if done % 100 == 0:
-                            state.save()
-                        msg = (f"  Progress: {done}/{len(to_process)} — "
-                               f"{success} ok, {failed} failed ({rate:.1f}/sec)")
-                        print(f"\r{msg}\033[K", end="", flush=True)
+        with open(args.output, output_mode) as out:
+            for item, response in zip(batch_items, responses):
+                if response is None:
+                    failed += 1
+                    continue
+                try:
+                    text = clean_json_response(response)
+                    data = json.loads(text)
+                    data["id"] = item.id
+                    data["dataset"] = item.dataset
+                    data["source_path"] = item.source_path
+                    if item.original_url:
+                        data["original_url"] = item.original_url
+                    if item.original_description:
+                        data["original_description"] = item.original_description
+                    if item.attribution:
+                        data["attribution"] = item.attribution
+                    out.write(json.dumps(data) + "\n")
+                    success += 1
+                    state.mark_processed(item.id)
+                except json.JSONDecodeError as e:
+                    print(f"  JSON parse error for {item.id}: {e}", file=sys.stderr)
+                    failed += 1
+    else:
+        # Standard concurrent mode
+        lock = threading.Lock()
+        with open(args.output, output_mode) as out:
+            with ThreadPoolExecutor(max_workers=args.workers) as executor:
+                futures = {
+                    executor.submit(process_item, client, source, item, prompt, args.frames): item
+                    for item in to_process
+                }
+
+                for future in as_completed(futures):
+                    item = futures[future]
+                    result = future.result()
+
+                    with lock:
+                        if result:
+                            out.write(json.dumps(result) + "\n")
+                            out.flush()
+                            success += 1
+                            state.mark_processed(item.id)
+                        else:
+                            failed += 1
+
+                        done = success + failed
+                        if done % 10 == 0 or done == len(to_process):
+                            elapsed = time.time() - start
+                            rate = done / elapsed if elapsed > 0 else 0
+                            if done % 100 == 0:
+                                state.save()
+                            msg = (f"  Progress: {done}/{len(to_process)} — "
+                                   f"{success} ok, {failed} failed ({rate:.1f}/sec)")
+                            print(f"\r{msg}\033[K", end="", flush=True)
+        print()
 
     # Final state save
     state.save()
 
-    print()
     elapsed = time.time() - start
     print(f"Done! {success} described, {failed} failed in {elapsed:.1f}s")
     print(f"Output: {args.output}")
     print(f"State: {state_file}")
 
     # Cost estimate
-    input_tokens = success * 1500
-    output_tokens = success * 200  # slightly higher for richer schema
-    cost = (input_tokens * 0.08 / 1_000_000) + (output_tokens * 0.30 / 1_000_000)
-    print(f"Estimated cost: ${cost:.4f}")
+    input_tokens = client.total_input_tokens
+    output_tokens = client.total_output_tokens
+    token_source = "actual"
+    if input_tokens == 0 and success > 0:
+        # Fallback estimate if API didn't return usage
+        input_tokens = success * 1500
+        output_tokens = success * 200
+        token_source = "estimated"
+
+    input_price, output_price = model_pricing.get(args.model, (0, 0))
+    batch_discount = 0.5 if use_batch else 1.0
+    cost = ((input_tokens * input_price / 1_000_000) +
+            (output_tokens * output_price / 1_000_000)) * batch_discount
+    print(f"Tokens: {input_tokens:,} in / {output_tokens:,} out ({token_source})")
+    if input_price > 0 or output_price > 0:
+        print(f"Cost: ${cost:.4f} ({args.model}, {'batch' if use_batch else 'standard'})")
+    else:
+        print(f"Cost: unknown (add {args.model} to models.yaml)")
+
+    # Write summary alongside JSONL for review.py to pick up
+    summary_path = args.output.with_suffix(".summary.json")
+    summary = {
+        "model": args.model,
+        "backend": args.backend,
+        "batch": use_batch,
+        "items": success,
+        "failed": failed,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "token_source": token_source,
+        "cost": round(cost, 6),
+        "elapsed_s": round(elapsed, 1),
+    }
+    with open(summary_path, "w") as f:
+        json.dump(summary, f, indent=2)
+        f.write("\n")
 
 
 if __name__ == "__main__":
