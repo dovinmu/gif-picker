@@ -13,33 +13,37 @@ make scrape SRC=gifgif
 make upload SRC=gifgif
 ```
 
-### 2. Describe
+### 2. Compare models (small sample)
 
-Generate rich text descriptions of each GIF using a vision model.
-
-**From R2 bucket (recommended):**
-```
-make describe-r2 N=100
-make describe-r2 N=100 MODEL=gemini-2.5-flash-lite
-```
-
-**Compare models side-by-side:**
-```
-make compare-models N=20 MODELS="gemini-3.1-flash-lite-preview,gemini-2.5-flash-lite,openrouter:google/gemma-3-4b-it"
-```
-
-This generates `review.md` with GIFs and descriptions inline for evaluation.
-
-### 3. Ingest
-
-Load descriptions into Antfly for vector search:
+Run several vision models on a small sample to evaluate quality before committing to a full run.
+Each model calls the API independently; results are written to separate JSONL files in `ingest/image-to-text/output/`.
 
 ```
-make ingest-r2
-make ingest-r2 MODEL=gemini-2.5-flash-lite
+make compare N=20 MODELS="gemini-3.1-flash-lite-preview,gemini-2.5-flash-lite,openrouter:google/gemma-3-4b-it"
 ```
 
-### 4. Search
+This auto-generates `review.md` with GIFs and descriptions inline for side-by-side evaluation.
+
+### 3. Describe (full run)
+
+Once you've picked a model, generate descriptions for the whole dataset:
+
+```
+make describe N=100
+make describe N=100 MODEL=gemini-2.5-flash-lite
+make describe N=100 SRC=gifgif          # filter to one source
+```
+
+### 4. Ingest
+
+Load descriptions into Antfly for vector search.
+Always reads from `descriptions-latest.jsonl`, which is symlinked by `make describe` to the most recent model's output:
+
+```
+make ingest
+```
+
+### 5. Search
 
 Start the web UI:
 

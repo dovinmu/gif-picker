@@ -71,46 +71,57 @@ def doc_id(desc: dict) -> str:
     return f"gif_{h}"
 
 
-def create_table(client: httpx.Client, table: str) -> None:
-    """Create Antfly table with two vector indexes."""
-    print(f"Creating table '{table}' with text + summarizer indexes (dim={EMBED_DIMENSION})...")
+def create_table(client: httpx.Client, table: str, summarizer: bool = False) -> None:
+    """Create Antfly table with vector indexes.
 
-    body = {
-        "indexes": {
-            "embeddings": {
-                "type": "aknn_v0",
-                "dimension": EMBED_DIMENSION,
-                "field": "combined_text",
-                "embedder": {
-                    "provider": "termite",
-                    "model": EMBED_MODEL,
-                },
-            },
-            "summarizer_embeddings": {
-                "type": "aknn_v0",
-                "dimension": EMBED_DIMENSION,
-                "template": (
-                    "{{media url=gif_url}}\n\n"
-                    "Describe what is happening in this animated image in detail. "
-                    "Include the emotional mood, key actions, where it might be from, "
-                    "and when someone might use it in conversation."
-                ),
-                "embedder": {
-                    "provider": "termite",
-                    "model": EMBED_MODEL,
-                },
-                "summarizer": {
-                    "provider": "gemini",
-                    "model": "gemini-2.0-flash-lite",
-                },
+    Args:
+        summarizer: If True, add a summarizer index that uses Gemini to generate
+            descriptions from GIF media at query time. Requires a valid GEMINI_API_KEY
+            on the Antfly server.
+    """
+    indexes = {
+        "embeddings": {
+            "type": "aknn_v0",
+            "dimension": EMBED_DIMENSION,
+            "field": "combined_text",
+            "embedder": {
+                "provider": "termite",
+                "model": EMBED_MODEL,
             },
         },
     }
+
+    if summarizer:
+        indexes["summarizer_embeddings"] = {
+            "type": "aknn_v0",
+            "dimension": EMBED_DIMENSION,
+            "template": (
+                "{{media url=gif_url}}\n\n"
+                "Describe what is happening in this animated image in detail. "
+                "Include the emotional mood, key actions, where it might be from, "
+                "and when someone might use it in conversation."
+            ),
+            "embedder": {
+                "provider": "termite",
+                "model": EMBED_MODEL,
+            },
+            "summarizer": {
+                "provider": "gemini",
+                "model": "gemini-2.0-flash-lite",
+            },
+        }
+
+    label = "text + summarizer" if summarizer else "text embedding"
+    print(f"Creating table '{table}' with {label} indexes (dim={EMBED_DIMENSION})...")
+
+    body = {"indexes": indexes}
 
     resp = client.post(f"/tables/{table}", json=body)
     if resp.status_code == 409 or "already exists" in resp.text:
         print(f"Table '{table}' already exists, continuing...")
         return
+    if not resp.is_success:
+        print(f"Create table failed ({resp.status_code}): {resp.text}")
     resp.raise_for_status()
     print(f"Created table '{table}'")
 
@@ -262,6 +273,7 @@ def main():
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE, help=f"Batch size (default: {BATCH_SIZE})")
     parser.add_argument("--r2-urls", help="Path to R2 URL mapping JSON (from upload_r2.py)")
     parser.add_argument("--media-base-url", default="", help="Base URL for media (e.g., /media or https://cdn.example.com)")
+    parser.add_argument("--summarizer", action="store_true", help="Add Gemini summarizer index (requires GEMINI_API_KEY on Antfly server)")
     args = parser.parse_args()
 
     if not any([args.jsonl, args.source, args.all_sources]):
@@ -271,7 +283,7 @@ def main():
 
     # Create table (unless skipped or ingesting additional sources into existing table)
     if not args.skip_create:
-        create_table(client, args.table)
+        create_table(client, args.table, summarizer=args.summarizer)
 
     # Load R2 URL mapping if provided
     r2_urls = None
