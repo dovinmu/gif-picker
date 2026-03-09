@@ -6,3 +6,19 @@ sources/*/descriptions.jsonl
 
 # Manifests track state - keep these if you want
 # sources/*/manifest.json
+
+# Downloaded dataset files
+sources/tgif/tgif-v1.0.tsv
+
+# Python cache
+pipeline/__pycache__/
+
+# Environment variables (credentials)
+.env
+
+# Benchmark artifacts (generated on VM)
+benchmark/fixtures/
+benchmark/results/
+
+# Benchmark run results (large JSONL files, regenerable)
+benchmark/runs/*/results/
