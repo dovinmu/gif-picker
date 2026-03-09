@@ -4,6 +4,13 @@ set -euo pipefail
 # Resolve paths relative to this script
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+
+# Load .env from project root
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    set -a
+    source "$PROJECT_ROOT/.env"
+    set +a
+fi
 MANIFEST="$SCRIPT_DIR/manifest.json"
 RESULTS_DIR="$SCRIPT_DIR/results"
 DESCRIBE="$PROJECT_ROOT/ingest/image-to-text/describe.py"

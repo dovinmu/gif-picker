@@ -668,10 +668,8 @@ def process_item(
                 data["attribution"] = item.attribution
             return data
         except json.JSONDecodeError as e:
-            if attempt < retries:
-                print(f"  JSON parse error (retrying): {e}", file=sys.stderr)
-            else:
-                print(f"  JSON parse error (giving up): {e}", file=sys.stderr)
+            if attempt >= retries:
+                print(f"  JSON parse error (giving up after {retries + 1} attempts): {e}", file=sys.stderr)
                 print(f"    Raw response: {response[:300]}", file=sys.stderr)
 
     return None
