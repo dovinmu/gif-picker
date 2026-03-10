@@ -14,10 +14,8 @@ from pathlib import Path
 
 MEDIA_BASE = "https://media.honeycomb.antfly.io"
 
-FIELDS = [
-    "literal", "source", "mood", "action", "tags", "characters",
-    "meme_reference", "context", "visual_style", "intensity", "suitable_for",
-]
+# Fields that are metadata, not description content
+SKIP_FIELDS = {"id", "dataset", "source_path", "attribution"}
 
 
 def format_value(v):
@@ -48,9 +46,9 @@ def model_name_from_path(path: str) -> str:
 
 def entry_fields_markdown(entry: dict) -> str:
     lines = []
-    for field in FIELDS:
-        if field in entry:
-            lines.append(f"- **{field}**: {format_value(entry[field])}")
+    for field, value in entry.items():
+        if field not in SKIP_FIELDS:
+            lines.append(f"- **{field}**: {format_value(value)}")
     return "\n".join(lines)
 
 

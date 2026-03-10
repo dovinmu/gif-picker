@@ -524,6 +524,7 @@ class OpenRouterClient(GeminiClient):
     def generate(self, prompt: str, images: list[bytes]) -> str | None:
         """Generate text from prompt and images using OpenRouter."""
         import base64
+        import time
 
         content = [{"type": "text", "text": prompt}]
         for img_data in images:
@@ -533,26 +534,33 @@ class OpenRouterClient(GeminiClient):
                 "image_url": {"url": f"data:image/png;base64,{b64}"}
             })
 
-        try:
-            resp = self.httpx.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers={"Authorization": f"Bearer {self.api_key}"},
-                json={
-                    "model": self.model,
-                    "messages": [{"role": "user", "content": content}],
-                    "max_tokens": 2048,
-                },
-                timeout=120.0,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            usage = data.get("usage", {})
-            self.total_input_tokens += usage.get("prompt_tokens", 0)
-            self.total_output_tokens += usage.get("completion_tokens", 0)
-            return data["choices"][0]["message"]["content"]
-        except Exception as e:
-            print(f"  OpenRouter error: {e}", file=sys.stderr)
-            return None
+        for attempt in range(3):
+            try:
+                resp = self.httpx.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                    json={
+                        "model": self.model,
+                        "messages": [{"role": "user", "content": content}],
+                        "max_tokens": 2048,
+                    },
+                    timeout=120.0,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                usage = data.get("usage", {})
+                self.total_input_tokens += usage.get("prompt_tokens", 0)
+                self.total_output_tokens += usage.get("completion_tokens", 0)
+                return data["choices"][0]["message"]["content"]
+            except (self.httpx.ConnectError, self.httpx.RemoteProtocolError) as e:
+                if attempt < 2:
+                    time.sleep(1 * (attempt + 1))
+                    continue
+                print(f"  OpenRouter error (after retries): {e}", file=sys.stderr)
+                return None
+            except Exception as e:
+                print(f"  OpenRouter error: {e}", file=sys.stderr)
+                return None
 
 
 # =============================================================================

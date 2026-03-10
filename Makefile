@@ -101,7 +101,8 @@ compare:
 	@test -n "$(R2_BUCKET)" || (echo "Error: R2_BUCKET not set" && exit 1)
 	@test -n "$(MODELS)" || (echo "Usage: make compare N=20 MODELS=\"model1,model2\"" && exit 1)
 	@mkdir -p $(DESCRIBE_OUTPUT_DIR)
-	@for spec in $$(echo "$(MODELS)" | tr ',' ' '); do \
+	@compare_files=""; \
+	for spec in $$(echo "$(MODELS)" | tr ',' ' '); do \
 		echo ""; \
 		case "$$spec" in \
 			openrouter:*) \
@@ -124,8 +125,11 @@ compare:
 			--prompt "ingest/image-to-text/prompt.txt" \
 			--workers $(DESCRIBE_WORKERS) \
 			--limit $(N); \
-	done
-	$(MAKE) review
+		compare_files="$$compare_files $(DESCRIBE_OUTPUT_DIR)/descriptions-$$safe_name.jsonl"; \
+	done; \
+	uv run ingest/image-to-text/review.py \
+		--input $$compare_files \
+		--output "$(DESCRIBE_OUTPUT_DIR)/review.md"
 
 # Ingest description output into Antfly
 ingest:
