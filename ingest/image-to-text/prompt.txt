@@ -5,10 +5,10 @@ Analyze the full sequence of action across all frames and return a JSON object w
 Required fields:
 - "literal": Factual description of the complete action/sequence (1-3 sentences, describe what happens from start to finish)
 - "source": Your best guess at where this is from — movie title, TV show, meme name, video game, news event, YouTube/TikTok trend, etc. Be specific (e.g., "Spy Kids (2001)" not just "movie"). Use "unknown" only if you genuinely cannot identify it.
-- "mood": Emotional tone or vibe (e.g., "funny", "wholesome", "chaotic", "satisfying", "dramatic", "sarcastic", "glib"). Pay attention to positive, negative, and neutral affects, and recognize that GIFs can be mixtures of different moods
+- "mood": Emotional tone or vibe (e.g., "funny", "wholesome", "chaotic", "satisfying", "dramatic", "sarcastic", "glib"). Pay attention to positive, negative, and neutral affects, and recognize that GIFs can be mixtures of different moods. Don't neglect to describe the human id when it is present: violence, sexuality, joy, defeat; these are all present in GIFs
 - "context": When someone might use this GIF in conversation (e.g., "reaction to unexpectedly good news")
 - "tags": Array of 5-10 searchable keywords useful for finding these types of GIFs (kebab case, no spaces) 
-- "rating": i.e. G, PG, PG-13, R, X. The rating is ONLY for the content in the GIF itself. If it does not have any objectionable content in the actual GIF, it gets a G rating (even if it's from an adult film, for example)
+- "rating": i.e. G, PG, PG-13, R, X. The rating is ONLY for the content in the GIF itself. 
 - "names": Array of named characters, recognizable people (e.g., ["Michael Scott", "Dwight Schrute"]), meme formats (e.g., ["Surprised Pikachu"]). Empty array if none recognized.
 - "visual_style": Brief description of the visual aesthetic (e.g., "live action", "anime", "pixel art", "3D animation", "screen recording")
 

@@ -546,21 +546,33 @@ class OpenRouterClient(GeminiClient):
                     },
                     timeout=120.0,
                 )
+                if resp.status_code == 429:
+                    wait = 30 * (attempt + 1)
+                    print(f"  OpenRouter rate limited, waiting {wait}s (attempt {attempt + 1}/3)...", file=sys.stderr)
+                    time.sleep(wait)
+                    continue
                 resp.raise_for_status()
                 data = resp.json()
+                if "choices" not in data:
+                    error = data.get("error", data)
+                    print(f"  OpenRouter API error: {error}", file=sys.stderr)
+                    return None
                 usage = data.get("usage", {})
                 self.total_input_tokens += usage.get("prompt_tokens", 0)
                 self.total_output_tokens += usage.get("completion_tokens", 0)
                 return data["choices"][0]["message"]["content"]
             except (self.httpx.ConnectError, self.httpx.RemoteProtocolError) as e:
+                wait = 5 * (attempt + 1)
                 if attempt < 2:
-                    time.sleep(1 * (attempt + 1))
+                    time.sleep(wait)
                     continue
                 print(f"  OpenRouter error (after retries): {e}", file=sys.stderr)
                 return None
             except Exception as e:
                 print(f"  OpenRouter error: {e}", file=sys.stderr)
                 return None
+        print(f"  OpenRouter error: still rate limited after 3 attempts", file=sys.stderr)
+        return None
 
 
 # =============================================================================
