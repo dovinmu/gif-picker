@@ -534,7 +534,7 @@ class OpenRouterClient(GeminiClient):
                 "image_url": {"url": f"data:image/png;base64,{b64}"}
             })
 
-        for attempt in range(3):
+        for attempt in range(2):
             try:
                 resp = self.httpx.post(
                     "https://openrouter.ai/api/v1/chat/completions",
@@ -546,9 +546,9 @@ class OpenRouterClient(GeminiClient):
                     },
                     timeout=120.0,
                 )
-                if resp.status_code == 429:
-                    wait = 30 * (attempt + 1)
-                    print(f"  OpenRouter rate limited, waiting {wait}s (attempt {attempt + 1}/3)...", file=sys.stderr)
+                if resp.status_code in (429, 500, 502, 503):
+                    wait = 10 * (attempt + 1)
+                    print(f"  OpenRouter {resp.status_code}, retrying in {wait}s ({attempt + 1}/2)...", file=sys.stderr)
                     time.sleep(wait)
                     continue
                 resp.raise_for_status()
@@ -561,17 +561,15 @@ class OpenRouterClient(GeminiClient):
                 self.total_input_tokens += usage.get("prompt_tokens", 0)
                 self.total_output_tokens += usage.get("completion_tokens", 0)
                 return data["choices"][0]["message"]["content"]
-            except (self.httpx.ConnectError, self.httpx.RemoteProtocolError) as e:
-                wait = 5 * (attempt + 1)
-                if attempt < 2:
+            except Exception as e:
+                if attempt < 1:
+                    wait = 10 * (attempt + 1)
+                    print(f"  OpenRouter error, retrying in {wait}s ({attempt + 1}/4): {e}", file=sys.stderr)
                     time.sleep(wait)
                     continue
-                print(f"  OpenRouter error (after retries): {e}", file=sys.stderr)
+                print(f"  OpenRouter error (giving up): {e}", file=sys.stderr)
                 return None
-            except Exception as e:
-                print(f"  OpenRouter error: {e}", file=sys.stderr)
-                return None
-        print(f"  OpenRouter error: still rate limited after 3 attempts", file=sys.stderr)
+        print(f"  OpenRouter: failed after 2 attempts", file=sys.stderr)
         return None
 
 

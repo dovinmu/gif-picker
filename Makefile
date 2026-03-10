@@ -16,7 +16,7 @@ INGEST_BATCH_SIZE ?= 50
 INGEST_TABLE ?= tgif_gifs_text
 
 # Describe settings
-DESCRIBE_WORKERS ?= 20
+WORKERS ?= 20
 MODEL ?= gemini-3.1-flash-lite-preview
 DESCRIBE_OUTPUT_DIR := ingest/image-to-text/output
 N ?= 100
@@ -87,7 +87,7 @@ describe:
 		--model $(MODEL) \
 		--output "$(DESCRIBE_OUTPUT_DIR)/descriptions-$(MODEL).jsonl" \
 		--prompt "ingest/image-to-text/prompt.txt" \
-		--workers $(DESCRIBE_WORKERS) \
+		--workers $(WORKERS) \
 		--limit $(N) \
 		--resume
 	ln -sf descriptions-$(MODEL).jsonl $(DESCRIBE_OUTPUT_DIR)/descriptions-latest.jsonl
@@ -123,7 +123,7 @@ compare:
 			--model "$$model" \
 			--output "$(DESCRIBE_OUTPUT_DIR)/descriptions-$$safe_name.jsonl" \
 			--prompt "ingest/image-to-text/prompt.txt" \
-			--workers $(DESCRIBE_WORKERS) \
+			--workers $(WORKERS) \
 			--limit $(N); \
 		compare_files="$$compare_files $(DESCRIBE_OUTPUT_DIR)/descriptions-$$safe_name.jsonl"; \
 	done; \
