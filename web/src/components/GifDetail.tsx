@@ -20,7 +20,7 @@ const HIDDEN_FIELDS = new Set([
 ]);
 
 // Ordered list of AI fields (tags first)
-const AI_FIELD_ORDER = ["tags", "literal", "source", "mood", "action", "context"];
+const AI_FIELD_ORDER = ["tags", "literal", "source", "mood", "context", "rating", "names", "visual_style"];
 
 // Ordered list of non-AI fields
 const NON_AI_FIELD_ORDER = ["original_description", "description", "tumblr_id"];
@@ -31,8 +31,10 @@ const FIELD_LABELS: Record<string, string> = {
   literal: "Description",
   source: "Source",
   mood: "Mood",
-  action: "Actions",
   context: "Use Case",
+  rating: "Rating",
+  names: "Names",
+  visual_style: "Visual Style",
   original_description: "Original Caption",
   description: "Original Caption",
   tumblr_id: "Tumblr ID",
@@ -42,7 +44,7 @@ const FIELD_LABELS: Record<string, string> = {
 };
 
 // The model used for AI descriptions
-const AI_MODEL_LABEL = "Gemini 2.0 Flash Lite";
+const AI_MODEL_LABEL = "Gemini 2.5 Flash Lite";
 
 function formatValue(value: unknown): string {
   if (Array.isArray(value)) return value.join(", ");

@@ -303,6 +303,7 @@ class GeminiClient(ABC):
     def __init__(self):
         self.total_input_tokens = 0
         self.total_output_tokens = 0
+        self.last_error = None
 
     @abstractmethod
     def generate(self, prompt: str, images: list[bytes]) -> str | None:
@@ -353,7 +354,7 @@ class GoogleGenAIClient(GeminiClient):
                 self.total_output_tokens += response.usage_metadata.candidates_token_count or 0
             return response.text
         except Exception as e:
-            print(f"  API error: {e}", file=sys.stderr)
+            self.last_error = str(e)
             return None
 
     def generate_batch(self, requests: list[tuple[str, list[bytes]]]) -> list[str | None]:
@@ -548,28 +549,26 @@ class OpenRouterClient(GeminiClient):
                 )
                 if resp.status_code in (429, 500, 502, 503):
                     wait = 10 * (attempt + 1)
-                    print(f"  OpenRouter {resp.status_code}, retrying in {wait}s ({attempt + 1}/2)...", file=sys.stderr)
+                    self.last_error = f"OpenRouter {resp.status_code}, retrying ({attempt + 1}/2)"
                     time.sleep(wait)
                     continue
                 resp.raise_for_status()
                 data = resp.json()
                 if "choices" not in data:
                     error = data.get("error", data)
-                    print(f"  OpenRouter API error: {error}", file=sys.stderr)
+                    self.last_error = f"OpenRouter API error: {error}"
                     return None
                 usage = data.get("usage", {})
                 self.total_input_tokens += usage.get("prompt_tokens", 0)
                 self.total_output_tokens += usage.get("completion_tokens", 0)
                 return data["choices"][0]["message"]["content"]
             except Exception as e:
+                self.last_error = str(e)
                 if attempt < 1:
-                    wait = 10 * (attempt + 1)
-                    print(f"  OpenRouter error, retrying in {wait}s ({attempt + 1}/4): {e}", file=sys.stderr)
-                    time.sleep(wait)
+                    time.sleep(10 * (attempt + 1))
                     continue
-                print(f"  OpenRouter error (giving up): {e}", file=sys.stderr)
                 return None
-        print(f"  OpenRouter: failed after 2 attempts", file=sys.stderr)
+        self.last_error = "OpenRouter: failed after 2 attempts"
         return None
 
 
@@ -888,6 +887,7 @@ def main():
                     for item in to_process
                 }
 
+                last_failed_shown = 0
                 for future in as_completed(futures):
                     item = futures[future]
                     result = future.result()
@@ -909,6 +909,10 @@ def main():
                                 state.save()
                             msg = (f"  Progress: {done}/{len(to_process)} — "
                                    f"{success} ok, {failed} failed ({rate:.1f}/sec)")
+                            if client.last_error and failed > last_failed_shown:
+                                err_short = client.last_error[:60]
+                                msg += f"  [err: {err_short}]"
+                                last_failed_shown = failed
                             print(f"\r{msg}\033[K", end="", flush=True)
         print()
 

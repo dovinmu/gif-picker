@@ -7,7 +7,7 @@ if [ $# -eq 0 ]; then
 fi
 
 ANTFLY_URL="${ANTFLY_URL:-http://localhost:8080/api/v1}"
-TABLE="${TABLE:-tgif_gifs_text}"
+TABLE="${TABLE:-honeycomb}"
 
 # Build JSON array of IDs
 deletes=$(printf '%s\n' "$@" | jq -R . | jq -s .)

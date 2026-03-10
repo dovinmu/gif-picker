@@ -5,7 +5,7 @@ import { GifDetail } from './components/GifDetail';
 import { AboutModal } from './components/AboutModal';
 import { searchGifs, getRandomGifs, getGifById, type GifResult } from './lib/antfly';
 
-const TABLE_NAME = 'tgif_gifs_text';
+const TABLE_NAME = 'honeycomb';
 
 function App() {
   const [gifs, setGifs] = useState<GifResult[]>([]);

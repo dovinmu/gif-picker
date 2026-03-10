@@ -33,7 +33,7 @@ load_dotenv()
 
 # Config
 ANTFLY_URL = os.environ.get("ANTFLY_URL", "http://localhost:8080/api/v1")
-TABLE_NAME = os.environ.get("INGEST_TABLE", "tgif_gifs_text")
+TABLE_NAME = os.environ.get("INGEST_TABLE", "honeycomb")
 BATCH_SIZE = 50
 EMBED_MODEL = "BAAI/bge-small-en-v1.5"
 EMBED_DIMENSION = 384
@@ -49,6 +49,10 @@ def combined_text(desc: dict) -> str:
     if isinstance(action, list):
         action = ", ".join(action)
 
+    names = desc.get("names", [])
+    if isinstance(names, list):
+        names = ", ".join(names)
+
     parts = [
         desc.get("literal", ""),
         "Source: " + desc.get("source", ""),
@@ -56,6 +60,9 @@ def combined_text(desc: dict) -> str:
         "Actions: " + action,
         "Use case: " + desc.get("context", ""),
         "Tags: " + ", ".join(desc.get("tags", [])),
+        "Names: " + names,
+        "Visual style: " + desc.get("visual_style", ""),
+        "Rating: " + desc.get("rating", ""),
     ]
     return ". ".join(parts)
 
@@ -178,17 +185,11 @@ def build_doc(desc: dict, default_attribution: str, r2_urls: dict | None = None,
     if isinstance(action, list):
         action = ", ".join(action)
 
-    doc = {
-        "gif_url": gif_url,
-        "original_description": desc.get("original_description", ""),
-        "literal": desc.get("literal", ""),
-        "source": desc.get("source", ""),
-        "mood": desc.get("mood", ""),
-        "action": action,
-        "context": desc.get("context", ""),
-        "tags": desc.get("tags", []),
-        "combined_text": combined_text(desc),
-    }
+    # Pass through all description fields, skip metadata
+    skip = {"id", "dataset", "source_path", "attribution"}
+    doc = {k: v for k, v in desc.items() if k not in skip and v}
+    doc["gif_url"] = gif_url
+    doc["combined_text"] = combined_text(desc)
 
     attribution = desc.get("attribution", "") or default_attribution
     if attribution:

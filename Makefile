@@ -13,7 +13,7 @@ ANTFLY_URL ?= http://localhost:8080/api/v1
 
 # Ingest settings
 INGEST_BATCH_SIZE ?= 50
-INGEST_TABLE ?= tgif_gifs_text
+INGEST_TABLE ?= honeycomb
 
 # Describe settings
 WORKERS ?= 20

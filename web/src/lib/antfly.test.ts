@@ -5,7 +5,7 @@ import { searchGifs, getRandomGifs } from './antfly';
 const mockFetch = vi.fn();
 globalThis.fetch = mockFetch;
 
-const TEXT_TABLE = 'tgif_gifs_text';
+const TEXT_TABLE = 'honeycomb';
 
 describe('Antfly API Client', () => {
   beforeEach(() => {
@@ -48,7 +48,7 @@ describe('Antfly API Client', () => {
 
       // Verify the request
       expect(mockFetch).toHaveBeenCalledWith(
-        '/api/v1/tables/tgif_gifs_text/query',
+        '/api/v1/tables/honeycomb/query',
         expect.objectContaining({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -194,7 +194,7 @@ describe('Antfly API Client', () => {
         });
       }
 
-      const result = await getRandomGifs('tgif_gifs_text', 30);
+      const result = await getRandomGifs('honeycomb', 30);
 
       // Should have called fetch multiple times (1 count + up to 5 batches)
       expect(mockFetch).toHaveBeenCalled();
