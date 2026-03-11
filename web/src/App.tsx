@@ -3,6 +3,7 @@ import { SearchBox } from './components/SearchBox';
 import { GifGrid } from './components/GifGrid';
 import { GifDetail } from './components/GifDetail';
 import { AboutModal } from './components/AboutModal';
+import { MoodFilterBar, MOOD_EMOJIS, type MoodValue } from './components/MoodFilterBar';
 import { searchGifs, getRandomGifs, getGifById, type GifResult } from './lib/antfly';
 
 const TABLE_NAME = 'honeycomb';
@@ -18,15 +19,16 @@ function App() {
   const [showAbout, setShowAbout] = useState(false);
   const [totalGifs, setTotalGifs] = useState<number | null>(null);
   const [searchInput, setSearchInput] = useState('');
+  const [selectedMood, setSelectedMood] = useState<MoodValue | null>(null);
   const [isDark, setIsDark] = useState(() => {
     if (typeof window !== 'undefined') {
       return window.matchMedia('(prefers-color-scheme: dark)').matches;
     }
     return false;
   });
-  const [deepLinkGifId] = useState(() => {
+  const [deepLinkPending, setDeepLinkPending] = useState(() => {
     const params = new URLSearchParams(window.location.search);
-    return params.get('gif');
+    return !!params.get('gif');
   });
 
   // Toggle dark mode
@@ -34,9 +36,9 @@ function App() {
     document.documentElement.classList.toggle('dark', isDark);
   }, [isDark]);
 
-  // Sync selectedGif ↔ URL ?gif= param (skip on mount if deep link pending)
+  // Sync selectedGif ↔ URL ?gif= param (skip while deep link is being resolved)
   useEffect(() => {
-    if (!initialLoadDone && deepLinkGifId && !selectedGif) return;
+    if (deepLinkPending) return;
     const params = new URLSearchParams(window.location.search);
     if (selectedGif) {
       params.set('gif', selectedGif.id);
@@ -46,10 +48,13 @@ function App() {
     const qs = params.toString();
     const newUrl = qs ? `${window.location.pathname}?${qs}` : window.location.pathname;
     window.history.replaceState(null, '', newUrl);
-  }, [selectedGif, initialLoadDone, deepLinkGifId]);
+  }, [selectedGif, deepLinkPending]);
 
   // Load GIFs on mount, then open deep-linked GIF if any
   useEffect(() => {
+    const abortController = new AbortController();
+    const deepLinkGifId = new URLSearchParams(window.location.search).get('gif');
+
     const loadGifs = async () => {
       setIsLoading(true);
       setError(null);
@@ -57,41 +62,55 @@ function App() {
       setLastQuery('');
       try {
         const response = await getRandomGifs(TABLE_NAME);
+        if (abortController.signal.aborted) return;
         setGifs(response.results);
         setTotalGifs(response.total);
 
         // Check for deep-linked GIF
-        if (deepLinkGifId && !selectedGif) {
-          const gifId = deepLinkGifId;
+        if (deepLinkGifId) {
           // Try to find it in loaded results first
-          const found = response.results.find(g => g.id === gifId);
+          const found = response.results.find(g => g.id === deepLinkGifId);
           if (found) {
             setSelectedGif(found);
           } else {
             // Fetch it directly from Antfly
-            const gif = await getGifById(TABLE_NAME, gifId);
-            if (gif) setSelectedGif(gif);
+            const gif = await getGifById(TABLE_NAME, deepLinkGifId);
+            if (abortController.signal.aborted) return;
+            if (gif) {
+              setSelectedGif(gif);
+            } else if (import.meta.env.DEV) {
+              console.warn(`Deep link: getGifById("${deepLinkGifId}") returned null`);
+            }
           }
         }
+        // Deep link resolved (or no deep link) — unlock URL sync
+        setDeepLinkPending(false);
       } catch (err) {
+        if (abortController.signal.aborted) return;
         console.error('Failed to load GIFs:', err);
         setError(err instanceof Error ? err.message : 'Failed to connect to Antfly');
+        // Keep deepLinkPending=true so ?gif= param is preserved for retry
       } finally {
-        setIsLoading(false);
-        setInitialLoadDone(true);
+        if (!abortController.signal.aborted) {
+          setIsLoading(false);
+          setInitialLoadDone(true);
+        }
       }
     };
     loadGifs();
+
+    return () => abortController.abort();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleSearch = useCallback(async (query: string) => {
-    if (query === lastQuery) return;
+  const handleSearch = useCallback(async (query: string, moodOverride?: MoodValue | null) => {
+    const mood = moodOverride !== undefined ? moodOverride : selectedMood;
+    if (query === lastQuery && mood === selectedMood && moodOverride === undefined) return;
     setSearchInput(query);
     setIsLoading(true);
     setError(null);
 
     try {
-      const response = await searchGifs(query, TABLE_NAME, 20);
+      const response = await searchGifs(query, TABLE_NAME, 20, mood ?? undefined);
       setGifs(response.results);
       setLastQuery(query);
     } catch (err) {
@@ -100,12 +119,14 @@ function App() {
     } finally {
       setIsLoading(false);
     }
-  }, [lastQuery]);
+  }, [lastQuery, selectedMood]);
 
   const handleClearSearch = useCallback(async () => {
+    setDeepLinkPending(false); // unlock URL sync if still pending from failed load
     setSearchKey(k => k + 1);
     setLastQuery('');
     setSearchInput('');
+    setSelectedMood(null);
     setIsLoading(true);
     setError(null);
     try {
@@ -119,6 +140,42 @@ function App() {
     }
   }, []);
 
+  const handleMoodSelect = useCallback(async (mood: MoodValue | null) => {
+    setSelectedMood(mood);
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      if (mood && searchInput) {
+        // Mood + text search: re-run search with mood filter
+        const response = await searchGifs(searchInput, TABLE_NAME, 20, mood);
+        setGifs(response.results);
+        setLastQuery(searchInput);
+      } else if (mood) {
+        // Mood only: filter without text search
+        const response = await getRandomGifs(TABLE_NAME, 30, mood);
+        setGifs(response.results);
+        setLastQuery('');
+      } else {
+        // Mood deselected, no text: show random
+        if (searchInput) {
+          const response = await searchGifs(searchInput, TABLE_NAME, 20);
+          setGifs(response.results);
+          setLastQuery(searchInput);
+        } else {
+          const response = await getRandomGifs(TABLE_NAME, 30);
+          setGifs(response.results);
+          setTotalGifs(response.total);
+          setLastQuery('');
+        }
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Search failed');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [searchInput]);
+
   // Handle tag click from GifDetail: append tag: prefix and search
   const handleTagClick = useCallback(async (tag: string) => {
     const tagExpr = tag.includes(' ') ? `tag:"${tag}"` : `tag:${tag}`;
@@ -130,7 +187,7 @@ function App() {
     setIsLoading(true);
     setError(null);
     try {
-      const response = await searchGifs(newQuery, TABLE_NAME, 20);
+      const response = await searchGifs(newQuery, TABLE_NAME, 20, selectedMood ?? undefined);
       setGifs(response.results);
       setLastQuery(newQuery);
     } catch (err) {
@@ -138,7 +195,13 @@ function App() {
     } finally {
       setIsLoading(false);
     }
-  }, [searchInput]);
+  }, [searchInput, selectedMood]);
+
+  // Handle mood emoji click from GifDetail
+  const handleMoodClick = useCallback((mood: MoodValue) => {
+    setSelectedGif(null);
+    handleMoodSelect(mood);
+  }, [handleMoodSelect]);
 
   return (
     <div className="min-h-screen bg-[hsl(var(--background))]">
@@ -198,6 +261,7 @@ function App() {
             </button>
           </div>
           <SearchBox key={searchKey} onSearch={handleSearch} isLoading={isLoading} initialValue={searchInput} />
+          <MoodFilterBar selected={selectedMood} onSelect={handleMoodSelect} />
         </div>
       </header>
 
@@ -210,7 +274,7 @@ function App() {
               Make sure Antfly is running: <code className="bg-[hsl(var(--muted))] px-2 py-1 rounded">antfly swarm</code>
             </p>
           </div>
-        ) : initialLoadDone && gifs.length === 0 && !lastQuery ? (
+        ) : initialLoadDone && gifs.length === 0 && !lastQuery && !selectedMood ? (
           <div className="text-center py-12">
             <h2 className="text-xl font-semibold text-[hsl(var(--foreground))] mb-4">
               No GIFs loaded yet
@@ -237,12 +301,15 @@ go run main.go -tsv /path/to/TGIF-Release/data/tgif-v1.0.tsv -limit 1000`}
           </div>
         ) : (
           <>
-            {(lastQuery || (isLoading && searchInput)) && (
+            {(lastQuery || selectedMood || (isLoading && searchInput)) && (
               <p className="text-[hsl(var(--muted-foreground))] mb-4">
-                {isLoading && searchInput ? `Searching for "${searchInput}"…` : `${gifs.length} results for "${lastQuery}"`}
+                {isLoading && (searchInput || selectedMood)
+                  ? `Searching${searchInput ? ` for "${searchInput}"` : ''}…`
+                  : `${gifs.length} results${lastQuery ? ` for "${lastQuery}"` : ''}${selectedMood ? ` (${MOOD_EMOJIS.find(m => m.value === selectedMood)?.emoji ?? ''} ${selectedMood})` : ''}`
+                }
               </p>
             )}
-            <GifGrid gifs={gifs} isLoading={isLoading} onGifClick={setSelectedGif} hasActiveSearch={!!lastQuery} />
+            <GifGrid gifs={gifs} isLoading={isLoading} onGifClick={setSelectedGif} hasActiveSearch={!!(lastQuery || selectedMood)} />
           </>
         )}
       </main>
@@ -277,7 +344,7 @@ go run main.go -tsv /path/to/TGIF-Release/data/tgif-v1.0.tsv -limit 1000`}
 
       {/* Detail overlay */}
       {selectedGif && (
-        <GifDetail gif={selectedGif} onClose={() => setSelectedGif(null)} hasActiveSearch={!!lastQuery} onTagClick={handleTagClick} />
+        <GifDetail gif={selectedGif} onClose={() => setSelectedGif(null)} hasActiveSearch={!!lastQuery} onTagClick={handleTagClick} onMoodClick={handleMoodClick} />
       )}
 
       {/* About modal */}

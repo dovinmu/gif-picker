@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { searchGifs, getRandomGifs } from './antfly';
+import { searchGifs, getRandomGifs, getGifById } from './antfly';
 
 // Mock fetch globally
 const mockFetch = vi.fn();
@@ -180,82 +180,45 @@ describe('Antfly API Client', () => {
     });
   });
 
-  describe('getRandomGifs', () => {
-    beforeEach(() => {
-      mockLocalStorage.clear();
-    });
-
-    it('should fetch random GIFs using seed word match queries', async () => {
-      // First call: count query (no cached total)
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({
-          responses: [{ hits: { total: 106109 } }],
-        }),
-      });
-
-      // Second call: seed word match query
+  describe('getGifById', () => {
+    it('should query by _id and return the GIF', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({
           responses: [{
             hits: {
-              hits: [
-                { id: 'gif_1', source: { gif_url: 'https://example.com/1.gif', description: 'funny cat' } },
-                { id: 'gif_2', source: { gif_url: 'https://example.com/2.gif', description: 'happy dog' } },
-              ],
-              total: 2,
-            },
-          }],
-        }),
-      });
-
-      const result = await getRandomGifs('honeycomb', 30);
-
-      expect(mockFetch).toHaveBeenCalledTimes(2);
-
-      // Verify count query
-      const countCall = JSON.parse(mockFetch.mock.calls[0][1].body);
-      expect(countCall.limit).toBe(1);
-
-      // Verify seed word query uses full_text_search match
-      const seedCall = JSON.parse(mockFetch.mock.calls[1][1].body);
-      expect(seedCall.full_text_search).toHaveProperty('match');
-      expect(seedCall.full_text_search).toHaveProperty('field', 'combined_text');
-      expect(seedCall.limit).toBe(40); // limit + 10 over-fetch
-
-      expect(result.results.length).toBeGreaterThan(0);
-      expect(result.total).toBe(106109); // Uses cached corpus total
-    });
-
-    it('should skip count query when total is cached', async () => {
-      store['honeycomb_gif_total'] = '106109';
-
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({
-          responses: [{
-            hits: {
-              hits: [
-                { id: 'gif_1', source: { gif_url: 'https://example.com/1.gif', description: 'funny cat' } },
-              ],
+              hits: [{
+                _id: 'sources_abc123',
+                _source: {
+                  gif_url: 'https://example.com/found.gif',
+                  description: 'a found gif',
+                },
+              }],
               total: 1,
             },
           }],
         }),
       });
 
-      const result = await getRandomGifs('honeycomb', 30);
+      const result = await getGifById(TEXT_TABLE, 'sources_abc123');
 
-      // Only one fetch call — no count query needed
-      expect(mockFetch).toHaveBeenCalledTimes(1);
-      expect(result.total).toBe(106109);
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/v1/tables/honeycomb/query',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({
+            full_text_search: { term: 'sources_abc123', field: '_id' },
+            limit: 1,
+          }),
+        }),
+      );
+
+      expect(result).not.toBeNull();
+      expect(result!.id).toBe('sources_abc123');
+      expect(result!.gif_url).toBe('https://example.com/found.gif');
     });
 
-    it('should retry with fallback word on empty results', async () => {
-      store['honeycomb_gif_total'] = '106109';
-
-      // First call: empty results from seed words
+    it('should return null when no results', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({
@@ -263,26 +226,16 @@ describe('Antfly API Client', () => {
         }),
       });
 
-      // Second call: fallback word gets results
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({
-          responses: [{
-            hits: {
-              hits: [
-                { id: 'gif_fb', source: { gif_url: 'https://example.com/fb.gif', description: 'fallback gif' } },
-              ],
-              total: 1,
-            },
-          }],
-        }),
-      });
+      const result = await getGifById(TEXT_TABLE, 'nonexistent');
+      expect(result).toBeNull();
+    });
 
-      const result = await getRandomGifs('honeycomb', 30);
+    it('should return null on fetch error', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('Network error'));
 
-      expect(mockFetch).toHaveBeenCalledTimes(2);
-      expect(result.results).toHaveLength(1);
-      expect(result.total).toBe(106109);
+      const result = await getGifById(TEXT_TABLE, 'any_id');
+      expect(result).toBeNull();
     });
   });
+
 });

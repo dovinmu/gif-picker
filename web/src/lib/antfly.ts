@@ -22,6 +22,7 @@ export interface GifResult {
   original_description?: string;
   literal?: string;
   mood?: string;
+  mood_emoji?: string;
   action?: string | string[];
   context?: string;
   source?: string;
@@ -39,14 +40,23 @@ export interface SearchResponse {
 
 export async function getGifById(tableName: string, id: string): Promise<GifResult | null> {
   try {
-    const response = await fetch(`${API_BASE}/tables/${tableName}/docs/${id}`);
+    const response = await fetch(`${API_BASE}/tables/${tableName}/query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        full_text_search: { term: id, field: '_id' },
+        limit: 1,
+      }),
+    });
     if (!response.ok) return null;
     const data = await response.json();
-    const source = data.source ?? data._source ?? data;
+    const hit = data.responses?.[0]?.hits?.hits?.[0];
+    if (!hit) return null;
+    const source = hit._source ?? hit.source ?? {};
     if (isRemovedGif(source) || hasBlockedTag(source) || hasBlockedRating(source)) return null;
     return {
       ...source,
-      id: data.id ?? data._id ?? id,
+      id: hit._id ?? hit.id ?? id,
       score: 0,
       gif_url: source.gif_url ?? '',
       description: source.description ?? source.original_description ?? '',
@@ -174,6 +184,7 @@ export async function searchGifs(
   query: string,
   tableName: string,
   limit: number = 50,
+  moodFilter?: string,
 ): Promise<SearchResponse> {
   const body: Record<string, unknown> = { limit };
   const { phrases, looseText, tags, negativeTags, ratings } = parseQuery(query);
@@ -217,6 +228,11 @@ export async function searchGifs(
         ? { match_phrase: bleveForm, field: 'rating' }
         : { term: bleveForm, field: 'rating' }
     );
+  }
+
+  // Mood emoji filter
+  if (moodFilter) {
+    filterParts.push({ term: moodFilter, field: 'mood_emoji' });
   }
 
   if (filterParts.length > 0) {
@@ -312,7 +328,12 @@ const TOTAL_CACHE_KEY = 'honeycomb_gif_total';
 // core. Capping at 2000 keeps scans under ~1s.
 const MAX_RANDOM_OFFSET = 2000;
 
-export async function getRandomGifs(tableName: string, limit: number = 30): Promise<SearchResponse> {
+export async function getRandomGifs(tableName: string, limit: number = 30, moodFilter?: string): Promise<SearchResponse> {
+  // When mood filter is active, use searchGifs with empty query to get filtered results
+  if (moodFilter) {
+    return searchGifs('', tableName, limit, moodFilter);
+  }
+
   const exclusion = buildExclusionQuery([]);
 
   // Use cached total from localStorage to pick a random offset (0 on first visit)
