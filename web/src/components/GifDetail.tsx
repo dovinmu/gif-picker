@@ -202,6 +202,19 @@ export function GifDetail({ gif, onClose, hasActiveSearch, onTagClick }: GifDeta
           )}
         </div>
 
+        {/* Copy URL bar — above the fold */}
+        <div className="px-5 pt-4">
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[hsl(var(--muted))] text-xs font-mono text-[hsl(var(--muted-foreground))] overflow-hidden">
+            <span className="truncate flex-1">{gif.gif_url}</span>
+            <button
+              onClick={handleCopyUrl}
+              className="shrink-0 px-2 py-1 rounded bg-[hsl(var(--background))] hover:bg-[hsl(var(--ring))] hover:text-white text-[hsl(var(--foreground))] text-xs transition-colors"
+            >
+              {copied === 'error' ? 'Failed!' : copied ? 'Copied!' : 'Copy URL'}
+            </button>
+          </div>
+        </div>
+
         <div className="p-5 space-y-4">
           {/* AI-generated fields section */}
           {aiFields.length > 0 && (
@@ -235,7 +248,7 @@ export function GifDetail({ gif, onClose, hasActiveSearch, onTagClick }: GifDeta
           )}
         </div>
 
-        {/* Attribution + URL bar + ID */}
+        {/* Attribution + ID */}
         <div className="px-5 pb-4 space-y-2">
           {gif.attribution && (
             <div className="text-xs text-[hsl(var(--muted-foreground))]">
@@ -250,15 +263,6 @@ export function GifDetail({ gif, onClose, hasActiveSearch, onTagClick }: GifDeta
               </a>
             </div>
           )}
-          <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[hsl(var(--muted))] text-xs font-mono text-[hsl(var(--muted-foreground))] overflow-hidden">
-            <span className="truncate flex-1">{gif.gif_url}</span>
-            <button
-              onClick={handleCopyUrl}
-              className="shrink-0 px-2 py-1 rounded bg-[hsl(var(--background))] hover:bg-[hsl(var(--ring))] hover:text-white text-[hsl(var(--foreground))] text-xs transition-colors"
-            >
-              {copied === 'error' ? 'Failed!' : copied ? 'Copied!' : 'Copy URL'}
-            </button>
-          </div>
           {gif.id && (
             <div className="text-xs font-mono text-[hsl(var(--muted-foreground))]">
               ID: {gif.id}
