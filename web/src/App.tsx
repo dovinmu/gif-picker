@@ -86,7 +86,6 @@ function App() {
 
   const handleSearch = useCallback(async (query: string) => {
     if (query === lastQuery) return;
-    setLastQuery(query);
     setSearchInput(query);
     setIsLoading(true);
     setError(null);
@@ -94,6 +93,7 @@ function App() {
     try {
       const response = await searchGifs(query, TABLE_NAME, 20);
       setGifs(response.results);
+      setLastQuery(query);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Search failed');
       console.error('Search error:', err);
@@ -237,9 +237,9 @@ go run main.go -tsv /path/to/TGIF-Release/data/tgif-v1.0.tsv -limit 1000`}
           </div>
         ) : (
           <>
-            {lastQuery && (
+            {(lastQuery || (isLoading && searchInput)) && (
               <p className="text-[hsl(var(--muted-foreground))] mb-4">
-                {gifs.length} results for "{lastQuery}"
+                {isLoading && searchInput ? `Searching for "${searchInput}"…` : `${gifs.length} results for "${lastQuery}"`}
               </p>
             )}
             <GifGrid gifs={gifs} isLoading={isLoading} onGifClick={setSelectedGif} hasActiveSearch={!!lastQuery} />
