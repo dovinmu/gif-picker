@@ -307,75 +307,20 @@ export async function searchGifs(
 
 const TOTAL_CACHE_KEY = 'honeycomb_gif_total';
 
-const RANDOM_SEED_WORDS = [
-  // emotions
-  'funny', 'happy', 'sad', 'surprised', 'angry', 'excited', 'confused',
-  'awkward', 'dramatic', 'wholesome', 'sarcastic', 'silly', 'cool',
-  'shocked', 'nervous', 'proud', 'scared', 'annoyed', 'embarrassed',
-  // actions
-  'dancing', 'laughing', 'crying', 'running', 'eating', 'sleeping',
-  'singing', 'fighting', 'waving', 'jumping', 'clapping', 'falling',
-  'walking', 'hugging', 'pointing', 'spinning',
-  // subjects
-  'cat', 'dog', 'baby', 'celebrity', 'cartoon', 'anime',
-  'sports', 'food', 'nature', 'car', 'vintage',
-  // content types
-  'reaction', 'meme', 'fail', 'celebration', 'performance',
-  'interview', 'movie', 'concert', 'party', 'game',
-  // vibes
-  'chaos', 'love', 'victory', 'danger', 'mystery', 'chill',
-  'intense', 'romantic', 'playful', 'energetic',
-];
-
-// Pick `count` random words from the seed pool (Fisher-Yates partial shuffle)
-function pickRandomWords(count: number): string[] {
-  const pool = [...RANDOM_SEED_WORDS];
-  const n = Math.min(count, pool.length);
-  for (let i = 0; i < n; i++) {
-    const j = i + Math.floor(Math.random() * (pool.length - i));
-    [pool[i], pool[j]] = [pool[j], pool[i]];
-  }
-  return pool.slice(0, n);
-}
-
-// High-frequency fallback words likely to match many GIFs
-const FALLBACK_WORDS = ['funny', 'reaction', 'happy', 'cat', 'dancing'];
+// Max offset for random GIF loading — Bleve implements offset as a linear
+// scan, so large values (e.g. 30k on 106k records) take ~29s and pin a CPU
+// core. Capping at 2000 keeps scans under ~1s.
+const MAX_RANDOM_OFFSET = 2000;
 
 export async function getRandomGifs(tableName: string, limit: number = 30): Promise<SearchResponse> {
   const exclusion = buildExclusionQuery([]);
 
-  // Cache true corpus total for footer display
+  // Use cached total from localStorage to pick a random offset (0 on first visit)
   const cachedTotal = parseInt(localStorage.getItem(TOTAL_CACHE_KEY) ?? '0', 10);
-  if (cachedTotal === 0) {
-    // First visit: fire a cheap count query to get the true total
-    const countBody: Record<string, unknown> = { limit: 1 };
-    if (exclusion) countBody.exclusion_query = exclusion;
-    try {
-      const countResp = await fetch(`${API_BASE}/tables/${tableName}/query`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(countBody),
-      });
-      if (countResp.ok) {
-        const countData = await countResp.json();
-        const total = countData.responses?.[0]?.hits?.total ?? 0;
-        if (total > 0) localStorage.setItem(TOTAL_CACHE_KEY, String(total));
-      }
-    } catch {
-      // Non-fatal — we'll still show GIFs, just without an accurate total
-    }
-  }
+  const maxOffset = Math.min(cachedTotal > limit ? cachedTotal - limit : 0, MAX_RANDOM_OFFSET);
+  const randomOffset = maxOffset > 0 ? Math.floor(Math.random() * maxOffset) : 0;
 
-  // Pick 2-3 random seed words for a match query
-  const wordCount = 2 + Math.floor(Math.random() * 2); // 2 or 3
-  const seedWords = pickRandomWords(wordCount).join(' ');
-
-  // Over-fetch to compensate for NSFW post-filtering
-  const fetchLimit = limit + 10;
-  const body: Record<string, unknown> = {
-    limit: fetchLimit,
-    full_text_search: { match: seedWords, field: 'combined_text' },
-  };
+  const body: Record<string, unknown> = { limit, offset: randomOffset };
   if (exclusion) body.exclusion_query = exclusion;
 
   const resp = await fetch(`${API_BASE}/tables/${tableName}/query`, {
@@ -387,15 +332,17 @@ export async function getRandomGifs(tableName: string, limit: number = 30): Prom
 
   const data = await resp.json();
   const firstResponse = data.responses?.[0];
+  const total = firstResponse?.hits?.total ?? 0;
   const hits = firstResponse?.hits?.hits ?? [];
 
-  // Fallback: if seed words matched nothing, retry with a single high-frequency word
-  if (hits.length === 0) {
-    const fallback = FALLBACK_WORDS[Math.floor(Math.random() * FALLBACK_WORDS.length)];
-    const retryBody: Record<string, unknown> = {
-      limit: fetchLimit,
-      full_text_search: { match: fallback, field: 'combined_text' },
-    };
+  // Cache total for future offset calculations and footer display
+  if (total > 0) {
+    localStorage.setItem(TOTAL_CACHE_KEY, String(total));
+  }
+
+  // If stale cache caused offset to overshoot (0 results), retry once at offset 0
+  if (hits.length === 0 && randomOffset > 0) {
+    const retryBody: Record<string, unknown> = { limit, offset: 0 };
     if (exclusion) retryBody.exclusion_query = exclusion;
 
     const retryResp = await fetch(`${API_BASE}/tables/${tableName}/query`, {
@@ -407,12 +354,14 @@ export async function getRandomGifs(tableName: string, limit: number = 30): Prom
 
     const retryData = await retryResp.json();
     const retryFirst = retryData.responses?.[0];
-    const displayTotal = parseInt(localStorage.getItem(TOTAL_CACHE_KEY) ?? '0', 10);
-    return buildRandomResponse(retryFirst?.hits?.hits ?? [], displayTotal, limit);
+    const retryTotal = retryFirst?.hits?.total ?? 0;
+    if (retryTotal > 0) {
+      localStorage.setItem(TOTAL_CACHE_KEY, String(retryTotal));
+    }
+    return buildRandomResponse(retryFirst?.hits?.hits ?? [], retryTotal, limit);
   }
 
-  const displayTotal = parseInt(localStorage.getItem(TOTAL_CACHE_KEY) ?? '0', 10);
-  return buildRandomResponse(hits, displayTotal, limit);
+  return buildRandomResponse(hits, total, limit);
 }
 
 function buildRandomResponse(hits: any[], total: number, limit: number): SearchResponse {
