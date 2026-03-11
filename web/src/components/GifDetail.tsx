@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import type { GifResult } from "../lib/antfly";
 
 interface GifDetailProps {
@@ -85,6 +85,28 @@ function renderField(key: string, value: unknown, onTagClick?: (tag: string) => 
 }
 
 export function GifDetail({ gif, onClose, hasActiveSearch, onTagClick }: GifDetailProps) {
+  const [copied, setCopied] = useState<boolean | "error">(false);
+
+  const handleCopyUrl = useCallback(async () => {
+    try {
+      const html = `<img src="${gif.gif_url}">`;
+      const htmlBlob = new Blob([html], { type: "text/html" });
+      const textBlob = new Blob([gif.gif_url], { type: "text/plain" });
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          "text/html": htmlBlob,
+          "text/plain": textBlob,
+        }),
+      ]);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy:", err);
+      setCopied("error");
+      setTimeout(() => setCopied(false), 2000);
+    }
+  }, [gif.gif_url]);
+
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -230,6 +252,12 @@ export function GifDetail({ gif, onClose, hasActiveSearch, onTagClick }: GifDeta
           )}
           <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[hsl(var(--muted))] text-xs font-mono text-[hsl(var(--muted-foreground))] overflow-hidden">
             <span className="truncate flex-1">{gif.gif_url}</span>
+            <button
+              onClick={handleCopyUrl}
+              className="shrink-0 px-2 py-1 rounded bg-[hsl(var(--background))] hover:bg-[hsl(var(--ring))] hover:text-white text-[hsl(var(--foreground))] text-xs transition-colors"
+            >
+              {copied === 'error' ? 'Failed!' : copied ? 'Copied!' : 'Copy URL'}
+            </button>
           </div>
           {gif.id && (
             <div className="text-xs font-mono text-[hsl(var(--muted-foreground))]">

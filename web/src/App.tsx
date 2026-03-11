@@ -24,14 +24,19 @@ function App() {
     }
     return false;
   });
+  const [deepLinkGifId] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('gif');
+  });
 
   // Toggle dark mode
   useEffect(() => {
     document.documentElement.classList.toggle('dark', isDark);
   }, [isDark]);
 
-  // Sync selectedGif ↔ URL ?gif= param
+  // Sync selectedGif ↔ URL ?gif= param (skip on mount if deep link pending)
   useEffect(() => {
+    if (!initialLoadDone && deepLinkGifId && !selectedGif) return;
     const params = new URLSearchParams(window.location.search);
     if (selectedGif) {
       params.set('gif', selectedGif.id);
@@ -41,7 +46,7 @@ function App() {
     const qs = params.toString();
     const newUrl = qs ? `${window.location.pathname}?${qs}` : window.location.pathname;
     window.history.replaceState(null, '', newUrl);
-  }, [selectedGif]);
+  }, [selectedGif, initialLoadDone, deepLinkGifId]);
 
   // Load GIFs on mount, then open deep-linked GIF if any
   useEffect(() => {
@@ -55,10 +60,9 @@ function App() {
         setGifs(response.results);
         setTotalGifs(response.total);
 
-        // Check for deep-linked GIF in URL
-        const params = new URLSearchParams(window.location.search);
-        const gifId = params.get('gif');
-        if (gifId && !selectedGif) {
+        // Check for deep-linked GIF
+        if (deepLinkGifId && !selectedGif) {
+          const gifId = deepLinkGifId;
           // Try to find it in loaded results first
           const found = response.results.find(g => g.id === gifId);
           if (found) {

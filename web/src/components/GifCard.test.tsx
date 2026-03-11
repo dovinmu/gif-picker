@@ -107,4 +107,13 @@ describe('GifCard', () => {
     const img = screen.getByRole('img');
     expect(img).toHaveAttribute('loading', 'lazy');
   });
+
+  it('should have pointer-events-none on hover overlay by default', () => {
+    render(<GifCard gif={mockGif} />);
+
+    const copyButton = screen.getByText('Copy GIF');
+    const overlay = copyButton.closest('.pointer-events-none');
+    expect(overlay).toBeInTheDocument();
+    expect(overlay).toHaveClass('group-hover:pointer-events-auto');
+  });
 });

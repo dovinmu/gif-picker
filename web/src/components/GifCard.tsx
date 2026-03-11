@@ -88,7 +88,7 @@ export function GifCard({ gif, onClick, hasActiveSearch }: GifCardProps) {
       )}
 
       {/* Hover overlay */}
-      <div className="absolute inset-0 bg-black/10 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-3">
+      <div className="absolute inset-0 bg-black/10 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none group-hover:pointer-events-auto flex flex-col justify-end p-3">
         {/* Actions */}
         <div className="flex gap-2">
           <button
