@@ -87,9 +87,19 @@ sudo systemctl status caddy
 ### Update frontend only
 
 ```bash
-cd gif-picker/web
-npm run build
+# On VM (honeycomb, us-west1-c)
+cd ~/gif-picker && git pull
+cd web && pnpm install && pnpm build
 sudo cp -r dist/* /var/www/honeycomb/
+```
+
+Or from your local machine:
+
+```bash
+gcloud compute ssh honeycomb --zone=us-west1-c --command="
+  cd ~/gif-picker && git pull && cd web && pnpm install && pnpm build &&
+  sudo cp -r dist/* /var/www/honeycomb/
+"
 ```
 
 ### Update database
