@@ -67,11 +67,13 @@ interface ParsedQuery {
   looseText: string;    // unquoted terms → match + semantic
   tags: string[];
   negativeTags: string[];
+  ratings: string[];
 }
 
 function parseQuery(raw: string): ParsedQuery {
   const tags: string[] = [];
   const negativeTags: string[] = [];
+  const ratings: string[] = [];
   const phrases: string[] = [];
 
   // Strip -tag:"quoted" and -tag:word first
@@ -92,6 +94,15 @@ function parseQuery(raw: string): ParsedQuery {
     .replace(/tag:(\S+)/g, (_, tag) => {
       tags.push(tag.toLowerCase());
       return '';
+    })
+    // rating:"quoted" and rating:word
+    .replace(/rating:"([^"]+)"/g, (_, r) => {
+      ratings.push(r.toLowerCase());
+      return '';
+    })
+    .replace(/rating:(\S+)/g, (_, r) => {
+      ratings.push(r.toLowerCase());
+      return '';
     });
 
   // Extract "quoted phrases"
@@ -101,7 +112,7 @@ function parseQuery(raw: string): ParsedQuery {
   });
 
   const looseText = remaining.trim();
-  return { phrases, looseText, tags, negativeTags };
+  return { phrases, looseText, tags, negativeTags, ratings };
 }
 
 // Build the full_text_search value from parsed query components
@@ -145,7 +156,7 @@ export async function searchGifs(
   limit: number = 50,
 ): Promise<SearchResponse> {
   const body: Record<string, unknown> = { limit };
-  const { phrases, looseText, tags, negativeTags } = parseQuery(query);
+  const { phrases, looseText, tags, negativeTags, ratings } = parseQuery(query);
 
   const fts = buildFullTextSearch(phrases, looseText);
   const hasTextSearch = !!(fts || looseText);
@@ -163,23 +174,32 @@ export async function searchGifs(
     }
   }
 
-  // Apply positive tag filter
-  // Use match_phrase for multi-word tags (Bleve tokenizes "Live Leak" into ["live","leak"],
-  // so term:"live leak" won't match — match_phrase finds adjacent tokens in order)
-  if (tags.length > 0) {
-    const tagQueries = tags.map(t =>
+  // Build structured filter queries from tag: and rating: prefixes
+  const filterParts: Record<string, unknown>[] = [];
+
+  // tag: filters — use match_phrase for multi-word tags (Bleve tokenizes
+  // "Live Leak" into ["live","leak"], so term:"live leak" won't match)
+  for (const t of tags) {
+    filterParts.push(
       t.includes(' ')
         ? { match_phrase: t, field: 'tags' }
         : { term: t, field: 'tags' }
     );
-    const tagQuery = tagQueries.length === 1 ? tagQueries[0] : { conjuncts: tagQueries };
+  }
+
+  // rating: filters
+  for (const r of ratings) {
+    filterParts.push({ term: r, field: 'rating' });
+  }
+
+  if (filterParts.length > 0) {
+    const filterQuery = filterParts.length === 1 ? filterParts[0] : { conjuncts: filterParts };
 
     if (hasTextSearch) {
-      // Tags as a filter on top of text/semantic search
-      body.filter_query = tagQuery;
+      body.filter_query = filterQuery;
     } else {
-      // Tag-only: use as the primary full-text search (no semantic)
-      body.full_text_search = tagQuery;
+      // Filter-only (no text/semantic search): use as primary full-text search
+      body.full_text_search = filterQuery;
     }
   }
 
@@ -243,67 +263,77 @@ export async function searchGifs(
   };
 }
 
+const TOTAL_CACHE_KEY = 'honeycomb_gif_total';
+
 export async function getRandomGifs(tableName: string, limit: number = 30): Promise<SearchResponse> {
-  // Antfly returns docs in insertion order, so a single query from offset 0
-  // only gets the most recently ingested source. Instead, fire parallel small
-  // queries at random offsets, merge & dedupe, then shuffle.
   const exclusion = buildExclusionQuery([]);
 
-  // First, get total count with a cheap limit=0 query
-  const countBody: Record<string, unknown> = { limit: 0 };
-  if (exclusion) countBody.exclusion_query = exclusion;
+  // Use cached total from localStorage to pick a random offset (0 on first visit)
+  const cachedTotal = parseInt(localStorage.getItem(TOTAL_CACHE_KEY) ?? '0', 10);
+  const randomOffset = cachedTotal > limit
+    ? Math.floor(Math.random() * (cachedTotal - limit))
+    : 0;
 
-  const countResp = await fetch(`${API_BASE}/tables/${tableName}/query`, {
+  const body: Record<string, unknown> = { limit, offset: randomOffset };
+  if (exclusion) body.exclusion_query = exclusion;
+
+  const resp = await fetch(`${API_BASE}/tables/${tableName}/query`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(countBody),
+    body: JSON.stringify(body),
   });
-  if (!countResp.ok) throw new Error(`Failed to load GIFs: ${countResp.statusText}`);
-  const countData = await countResp.json();
-  const total = countData.responses?.[0]?.hits?.total ?? 0;
-  if (total === 0) return { results: [], total: 0 };
+  if (!resp.ok) throw new Error(`Failed to load GIFs: ${resp.statusText}`);
 
-  // Pick a few random offsets and fetch small batches in parallel
-  const batchSize = Math.min(limit * 2, total);
-  const numBatches = Math.min(5, Math.ceil(total / batchSize));
-  const offsets = Array.from({ length: numBatches }, () =>
-    Math.floor(Math.random() * Math.max(1, total - batchSize))
-  );
+  const data = await resp.json();
+  const firstResponse = data.responses?.[0];
+  const total = firstResponse?.hits?.total ?? 0;
+  const hits = firstResponse?.hits?.hits ?? [];
 
-  const fetches = offsets.map(async (offset) => {
-    const body: Record<string, unknown> = { limit: batchSize, offset };
-    if (exclusion) body.exclusion_query = exclusion;
-    const resp = await fetch(`${API_BASE}/tables/${tableName}/query`, {
+  // Cache total for future offset calculations and footer display
+  if (total > 0) {
+    localStorage.setItem(TOTAL_CACHE_KEY, String(total));
+  }
+
+  // If stale cache caused offset to overshoot (0 results), retry once at offset 0
+  if (hits.length === 0 && randomOffset > 0) {
+    const retryBody: Record<string, unknown> = { limit, offset: 0 };
+    if (exclusion) retryBody.exclusion_query = exclusion;
+
+    const retryResp = await fetch(`${API_BASE}/tables/${tableName}/query`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify(retryBody),
     });
-    if (!resp.ok) return [];
-    const data = await resp.json();
-    return data.responses?.[0]?.hits?.hits ?? [];
-  });
+    if (!retryResp.ok) throw new Error(`Failed to load GIFs: ${retryResp.statusText}`);
 
-  const batches = await Promise.all(fetches);
+    const retryData = await retryResp.json();
+    const retryFirst = retryData.responses?.[0];
+    const retryTotal = retryFirst?.hits?.total ?? 0;
+    if (retryTotal > 0) {
+      localStorage.setItem(TOTAL_CACHE_KEY, String(retryTotal));
+    }
+    return buildRandomResponse(retryFirst?.hits?.hits ?? [], retryTotal, limit);
+  }
 
-  // Merge & dedupe
-  const seen = new Set<string>();
-  const pool: GifResult[] = [];
-  for (const hits of batches) {
-    for (const hit of hits) {
-      const id = hit._id ?? '';
-      if (seen.has(id)) continue;
-      seen.add(id);
+  return buildRandomResponse(hits, total, limit);
+}
+
+function buildRandomResponse(hits: any[], total: number, limit: number): SearchResponse {
+  const pool: GifResult[] = hits
+    .filter((hit: any) => {
       const source = hit.source ?? hit._source ?? {};
-      if (isRemovedGif(source) || hasBlockedTag(source)) continue;
-      pool.push({
+      return !isRemovedGif(source) && !hasBlockedTag(source);
+    })
+    .map((hit: any) => {
+      const source = hit.source ?? hit._source ?? {};
+      return {
         ...source,
-        id,
+        id: hit.id ?? hit._id ?? '',
         score: hit._score ?? 1,
         gif_url: source.gif_url ?? '',
         description: source.description ?? source.original_description ?? source.combined_text ?? '',
-      });
-    }
-  }
+      };
+    });
 
   // Fisher-Yates shuffle
   for (let i = pool.length - 1; i > 0; i--) {
