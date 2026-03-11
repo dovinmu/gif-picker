@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { searchGifs, getRandomGifs, getGifById } from './antfly';
+import { searchGifs, getGifById } from './antfly';
 
 // Mock fetch globally
 const mockFetch = vi.fn();
