@@ -1,17 +1,22 @@
-# Replace with your domain (or use :80 for HTTP-only testing)
-honeycomb.example.com {
-    # Proxy API requests to Antfly (must be before file_server)
+:80 {
     handle /api/* {
         reverse_proxy localhost:8080
     }
 
-    # Proxy termite requests (strip prefix)
-    handle /termite/* {
-        uri strip_prefix /termite
-        reverse_proxy localhost:11433
+    handle {
+        root * /var/www/honeycomb
+        try_files {path} /index.html
+        file_server
     }
 
-    # Static frontend (catch-all)
+    encode gzip
+}
+
+honeycomb.rowan.earth {
+    handle /api/* {
+        reverse_proxy localhost:8080
+    }
+
     handle {
         root * /var/www/honeycomb
         try_files {path} /index.html
@@ -27,11 +32,11 @@ honeycomb.example.com {
     }
 }
 
-# Antfly admin dashboard on subdomain (no asset path conflicts)
-admin.honeycomb.example.com {
-    basic_auth {
-        # Generate hash: caddy hash-password
-        admin $2a$14$REPLACE_WITH_HASH
+admin.honeycomb.rowan.earth {
+    @notAcme not path /.well-known/acme-challenge/*
+    basic_auth @notAcme {
+        # caddy hash-password --plaintext <password>
+        adminaf $2a$14$REPLACE_WITH_HASH
     }
 
     reverse_proxy localhost:8080

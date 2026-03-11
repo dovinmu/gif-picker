@@ -3,6 +3,7 @@ sources/*/media/
 
 # Descriptions can be regenerated
 sources/*/descriptions.jsonl
+ingest/*/output/descriptions-*.jsonl
 
 # Manifests track state - keep these if you want
 # sources/*/manifest.json

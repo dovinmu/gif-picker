@@ -4,16 +4,16 @@ After=network.target
 
 [Service]
 Type=simple
-User=ubuntu
-WorkingDirectory=/home/ubuntu
-ExecStart=/home/ubuntu/antfly/antfly swarm --config /home/ubuntu/antfly/gif-picker/config.yaml
+User=rowan
+WorkingDirectory=/home/rowan
+ExecStart=/home/rowan/.local/bin/antfly swarm --data-dir /home/rowan/.antfly --config /home/rowan/gif-picker/config.yaml
 Restart=on-failure
 RestartSec=5
 
-# Environment
-Environment=HOME=/home/ubuntu
+Environment=HOME=/home/rowan
+Environment=LD_LIBRARY_PATH=/usr/local/lib/antfly
+EnvironmentFile=/home/rowan/.env
 
-# Logging
 StandardOutput=journal
 StandardError=journal
 
