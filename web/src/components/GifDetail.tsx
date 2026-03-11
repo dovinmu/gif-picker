@@ -36,7 +36,7 @@ const FIELD_LABELS: Record<string, string> = {
   names: "Names",
   visual_style: "Visual Style",
   original_description: "Original Caption",
-  description: "Original Caption",
+  description: "Caption",
   tumblr_id: "Tumblr ID",
   _timestamp: "Retrieved At",
   timestamp: "Retrieved At",

@@ -2,8 +2,16 @@
 
 const API_BASE = '/api/v1';
 
-// Tags that are globally blocked - GIFs with these tags are hidden from all users
-const BLOCKED_TAGS = new Set(['porn']);
+declare const __NSFW_MODE__: boolean;
+
+// In SFW mode (default), hide GIFs with these tags or rating:X.
+// Start with NSFW=1 npm run dev to disable all content filtering.
+const BLOCKED_TAGS: Set<string> = __NSFW_MODE__
+  ? new Set()
+  : new Set(['porn', 'sexual', 'nsfw', 'adult-content']);
+const BLOCKED_RATINGS: Set<string> = __NSFW_MODE__
+  ? new Set()
+  : new Set(['x']);
 
 export interface GifResult {
   id: string;
@@ -35,13 +43,13 @@ export async function getGifById(tableName: string, id: string): Promise<GifResu
     if (!response.ok) return null;
     const data = await response.json();
     const source = data.source ?? data._source ?? data;
-    if (isRemovedGif(source)) return null;
+    if (isRemovedGif(source) || hasBlockedTag(source) || hasBlockedRating(source)) return null;
     return {
       ...source,
       id: data.id ?? data._id ?? id,
       score: 0,
       gif_url: source.gif_url ?? '',
-      description: source.description ?? source.original_description ?? source.combined_text ?? '',
+      description: source.description ?? source.original_description ?? '',
     };
   } catch {
     return null;
@@ -59,6 +67,13 @@ function hasBlockedTag(source: Record<string, any>): boolean {
   const tags = source.tags;
   if (!Array.isArray(tags)) return false;
   return tags.some(tag => typeof tag === 'string' && BLOCKED_TAGS.has(tag.toLowerCase()));
+}
+
+// Check if GIF has a blocked rating
+function hasBlockedRating(source: Record<string, any>): boolean {
+  const rating = source.rating;
+  if (typeof rating !== 'string') return false;
+  return BLOCKED_RATINGS.has(rating.toLowerCase());
 }
 
 // Google-style query parsing: "quoted phrases", tag:X, -tag:X, and loose terms
@@ -131,13 +146,18 @@ function buildFullTextSearch(phrases: string[], looseText: string): Record<strin
   return { conjuncts: parts };
 }
 
-// Build exclusion_query from negative tags and blocked tags
+// Build exclusion_query from negative tags, blocked tags, and blocked ratings
 function buildExclusionQuery(negativeTags: string[]): Record<string, unknown> | undefined {
   const parts: string[] = [];
 
   // Add globally blocked tags
   for (const tag of BLOCKED_TAGS) {
     parts.push(`tags:"${tag}"`);
+  }
+
+  // Add globally blocked ratings
+  for (const rating of BLOCKED_RATINGS) {
+    parts.push(`rating:"${rating}"`);
   }
 
   // Add user's negative tags
@@ -177,19 +197,26 @@ export async function searchGifs(
   // Build structured filter queries from tag: and rating: prefixes
   const filterParts: Record<string, unknown>[] = [];
 
-  // tag: filters — use match_phrase for multi-word tags (Bleve tokenizes
-  // "Live Leak" into ["live","leak"], so term:"live leak" won't match)
+  // tag: filters — use match_phrase for compound tags since Bleve tokenizes
+  // on hyphens and spaces (e.g. "adult-content" → ["adult","content"])
   for (const t of tags) {
+    const bleveForm = t.replace(/-/g, ' ');
     filterParts.push(
-      t.includes(' ')
-        ? { match_phrase: t, field: 'tags' }
-        : { term: t, field: 'tags' }
+      bleveForm.includes(' ')
+        ? { match_phrase: bleveForm, field: 'tags' }
+        : { term: bleveForm, field: 'tags' }
     );
   }
 
-  // rating: filters
+  // rating: filters — use match_phrase with hyphens converted to spaces
+  // since Bleve tokenizes "PG-13" as ["pg","13"]
   for (const r of ratings) {
-    filterParts.push({ term: r, field: 'rating' });
+    const bleveForm = r.replace(/-/g, ' ');
+    filterParts.push(
+      bleveForm.includes(' ')
+        ? { match_phrase: bleveForm, field: 'rating' }
+        : { term: bleveForm, field: 'rating' }
+    );
   }
 
   if (filterParts.length > 0) {
@@ -239,7 +266,7 @@ export async function searchGifs(
   const results: GifResult[] = hits
     .filter((hit: any) => {
       const source = hit.source ?? hit._source ?? {};
-      return !isRemovedGif(source) && !hasBlockedTag(source);
+      return !isRemovedGif(source) && !hasBlockedTag(source) && !hasBlockedRating(source);
     })
     .map((hit: any, index: number) => {
       // Debug: log first hit structure
@@ -252,14 +279,29 @@ export async function searchGifs(
         id: hit.id ?? hit._id ?? '',
         score: hit._index_scores?.embeddings ?? hit._score ?? 0,
         gif_url: source.gif_url ?? '',
-        description: source.description ?? source.original_description ?? source.combined_text ?? '',
+        description: source.description ?? source.original_description ?? '',
         rank: index + 1,
       };
     });
 
+  // Post-filter for exact tag/rating matching — Bleve tokenizes on hyphens,
+  // so a term query for a tag also matches compound tags containing that word.
+  // The server query is best-effort; we do exact string matching here.
+  const filtered = results.filter((gif) => {
+    if (tags.length > 0) {
+      const gifTags = (gif.tags ?? []).map((t: string) => t.toLowerCase());
+      if (!tags.every(t => gifTags.includes(t))) return false;
+    }
+    if (ratings.length > 0) {
+      const gifRating = (typeof gif.rating === 'string' ? gif.rating : '').toLowerCase();
+      if (!ratings.includes(gifRating)) return false;
+    }
+    return true;
+  });
+
   return {
-    results,
-    total: firstResponse?.hits?.total ?? results.length,
+    results: filtered,
+    total: firstResponse?.hits?.total ?? filtered.length,
   };
 }
 
@@ -322,7 +364,7 @@ function buildRandomResponse(hits: any[], total: number, limit: number): SearchR
   const pool: GifResult[] = hits
     .filter((hit: any) => {
       const source = hit.source ?? hit._source ?? {};
-      return !isRemovedGif(source) && !hasBlockedTag(source);
+      return !isRemovedGif(source) && !hasBlockedTag(source) && !hasBlockedRating(source);
     })
     .map((hit: any) => {
       const source = hit.source ?? hit._source ?? {};
@@ -331,7 +373,7 @@ function buildRandomResponse(hits: any[], total: number, limit: number): SearchR
         id: hit.id ?? hit._id ?? '',
         score: hit._score ?? 1,
         gif_url: source.gif_url ?? '',
-        description: source.description ?? source.original_description ?? source.combined_text ?? '',
+        description: source.description ?? source.original_description ?? '',
       };
     });
 

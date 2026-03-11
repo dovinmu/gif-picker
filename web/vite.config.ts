@@ -4,9 +4,13 @@ import tailwindcss from '@tailwindcss/vite'
 
 const remote = process.env.REMOTE === '1'
 const apiTarget = remote ? 'https://honeycomb.rowan.earth' : 'http://localhost:8080'
+const nsfw = process.env.NSFW === '1'
 
 // https://vite.dev/config/
 export default defineConfig({
+  define: {
+    __NSFW_MODE__: JSON.stringify(nsfw),
+  },
   plugins: [react(), tailwindcss()],
   server: {
     proxy: {

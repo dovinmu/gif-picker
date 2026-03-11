@@ -352,6 +352,14 @@ class GoogleGenAIClient(GeminiClient):
             if response.usage_metadata:
                 self.total_input_tokens += response.usage_metadata.prompt_token_count or 0
                 self.total_output_tokens += response.usage_metadata.candidates_token_count or 0
+            if not response.text:
+                if response.prompt_feedback and response.prompt_feedback.block_reason:
+                    self.last_error = f"blocked: {response.prompt_feedback.block_reason.name}"
+                elif response.candidates and response.candidates[0].finish_reason:
+                    self.last_error = f"finish: {response.candidates[0].finish_reason.name}"
+                else:
+                    self.last_error = "empty response"
+                return None
             return response.text
         except Exception as e:
             self.last_error = str(e)
@@ -650,19 +658,18 @@ def process_item(
     prompt: str,
     num_frames: int = NUM_FRAMES,
     retries: int = 1
-) -> dict | None:
-    """Process a single GIF item and return description dict."""
+) -> tuple[dict | None, str | None]:
+    """Process a single GIF item. Returns (result_dict, failure_reason) tuple."""
     # Download GIF
     gif_data = source.download(item)
     if gif_data is None:
-        return None
+        return None, "download"
 
     # Extract frames
     try:
         frames = extract_frames(gif_data, num_frames=num_frames)
     except Exception as e:
-        print(f"  Frame extraction error: {e}", file=sys.stderr)
-        return None
+        return None, f"frames: {e}"
 
     # Generate description
     for attempt in range(1 + retries):
@@ -683,13 +690,12 @@ def process_item(
                 data["original_description"] = item.original_description
             if item.attribution:
                 data["attribution"] = item.attribution
-            return data
+            return data, None
         except json.JSONDecodeError as e:
             if attempt >= retries:
-                print(f"  JSON parse error (giving up after {retries + 1} attempts): {e}", file=sys.stderr)
-                print(f"    Raw response: {response[:300]}", file=sys.stderr)
+                return None, f"json: {e}"
 
-    return None
+    return None, f"api: {client.last_error or 'no response'}"
 
 
 # =============================================================================
@@ -715,6 +721,8 @@ def main():
                         help="Prompt file")
     parser.add_argument("--resume", action="store_true",
                         help="Resume from checkpoint")
+    parser.add_argument("--only-unprocessed-by",
+                        help="Only process items that failed/were skipped by this model (reads its state file)")
     parser.add_argument("--workers", type=int, default=20,
                         help="Number of concurrent workers")
     parser.add_argument("--frames", type=int, default=NUM_FRAMES,
@@ -803,6 +811,19 @@ def main():
     items = list(source.list_items(args.limit))
     print(f"Found {len(items)} items")
 
+    # Filter to only items unprocessed by another model
+    if args.only_unprocessed_by:
+        other_state_file = args.output.parent / f"descriptions-{args.only_unprocessed_by}.state.json"
+        if not other_state_file.exists():
+            print(f"Error: state file not found: {other_state_file}", file=sys.stderr)
+            sys.exit(1)
+        other_state = ProcessingState()
+        other_state.load(other_state_file)
+        all_ids = {item.id for item in items}
+        unprocessed_ids = all_ids - other_state.processed_ids
+        items = [item for item in items if item.id in unprocessed_ids]
+        print(f"Filtered to {len(items)} items unprocessed by {args.only_unprocessed_by}")
+
     # Filter already processed
     to_process = [item for item in items if not state.is_processed(item.id)]
     print(f"{len(to_process)} items to process with {args.workers} workers")
@@ -888,9 +909,10 @@ def main():
                 }
 
                 last_failed_shown = 0
+                fail_reasons: dict[str, int] = {}
                 for future in as_completed(futures):
                     item = futures[future]
-                    result = future.result()
+                    result, reason = future.result()
 
                     with lock:
                         if result:
@@ -900,6 +922,9 @@ def main():
                             state.mark_processed(item.id)
                         else:
                             failed += 1
+                            # Bucket by reason, truncated for grouping
+                            bucket = (reason or "unknown")[:40]
+                            fail_reasons[bucket] = fail_reasons.get(bucket, 0) + 1
 
                         done = success + failed
                         if done % 10 == 0 or done == len(to_process):
@@ -921,6 +946,9 @@ def main():
 
     elapsed = time.time() - start
     print(f"Done! {success} described, {failed} failed in {elapsed:.1f}s")
+    if fail_reasons:
+        breakdown = ", ".join(f"{k}: {v}" for k, v in sorted(fail_reasons.items(), key=lambda x: -x[1]))
+        print(f"Failure breakdown: {breakdown}")
     print(f"Output: {args.output}")
     print(f"State: {state_file}")
 

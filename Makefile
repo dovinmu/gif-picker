@@ -76,22 +76,27 @@ upload-all:
 
 # Generate descriptions from R2 bucket (single model)
 # Optional SRC= filters to a single source via R2 prefix
+# Models prefixed with "openrouter:" use the OpenRouter backend
 describe:
 	@test -n "$(R2_BUCKET)" || (echo "Error: R2_BUCKET not set" && exit 1)
 	@mkdir -p $(DESCRIBE_OUTPUT_DIR)
+	$(eval DESCRIBE_BACKEND := $(if $(filter openrouter:%,$(MODEL)),openrouter,genai))
+	$(eval DESCRIBE_MODEL := $(patsubst openrouter:%,%,$(MODEL)))
+	$(eval DESCRIBE_SAFE_NAME := $(subst /,-,$(DESCRIBE_MODEL)))
 	uv run ingest/image-to-text/describe.py \
 		--source r2 \
 		--r2-bucket "$(R2_BUCKET)" \
 		$(if $(SRC),--r2-prefix "sources/$(SRC)/") \
-		--backend genai \
-		--model $(MODEL) \
-		--output "$(DESCRIBE_OUTPUT_DIR)/descriptions-$(MODEL).jsonl" \
+		--backend $(DESCRIBE_BACKEND) \
+		--model "$(DESCRIBE_MODEL)" \
+		--output "$(DESCRIBE_OUTPUT_DIR)/descriptions-$(DESCRIBE_SAFE_NAME).jsonl" \
 		--prompt "ingest/image-to-text/prompt.txt" \
 		--workers $(WORKERS) \
 		--limit $(N) \
-		--resume
-	ln -sf descriptions-$(MODEL).jsonl $(DESCRIBE_OUTPUT_DIR)/descriptions-latest.jsonl
-	@echo "Active model: $(MODEL)"
+		--resume \
+		$(if $(ONLY_UNPROCESSED_BY),--only-unprocessed-by "$(ONLY_UNPROCESSED_BY)")
+	ln -sf descriptions-$(DESCRIBE_SAFE_NAME).jsonl $(DESCRIBE_OUTPUT_DIR)/descriptions-latest.jsonl
+	@echo "Active model: $(DESCRIBE_MODEL)"
 	$(MAKE) review
 
 # Generate descriptions with multiple models for comparison
