@@ -5,6 +5,18 @@ import { searchGifs, getRandomGifs } from './antfly';
 const mockFetch = vi.fn();
 globalThis.fetch = mockFetch;
 
+// Mock localStorage (jsdom's implementation is incomplete)
+const store: Record<string, string> = {};
+const mockLocalStorage = {
+  getItem: vi.fn((key: string) => store[key] ?? null),
+  setItem: vi.fn((key: string, value: string) => { store[key] = value; }),
+  removeItem: vi.fn((key: string) => { delete store[key]; }),
+  clear: vi.fn(() => { for (const key in store) delete store[key]; }),
+  get length() { return Object.keys(store).length; },
+  key: vi.fn((i: number) => Object.keys(store)[i] ?? null),
+};
+Object.defineProperty(globalThis, 'localStorage', { value: mockLocalStorage, writable: true });
+
 const TEXT_TABLE = 'honeycomb';
 
 describe('Antfly API Client', () => {
@@ -169,36 +181,108 @@ describe('Antfly API Client', () => {
   });
 
   describe('getRandomGifs', () => {
-    it('should fetch random GIFs with multiple batch requests', async () => {
-      // First call: count query
+    beforeEach(() => {
+      mockLocalStorage.clear();
+    });
+
+    it('should fetch random GIFs using seed word match queries', async () => {
+      // First call: count query (no cached total)
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({
-          responses: [{ hits: { total: 100 } }],
+          responses: [{ hits: { total: 106109 } }],
         }),
       });
 
-      // Subsequent calls: batch fetches (up to 5 batches)
-      for (let i = 0; i < 5; i++) {
-        mockFetch.mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({
-            responses: [{
-              hits: {
-                hits: [
-                  { _id: `gif_${i}`, source: { gif_url: `https://example.com/${i}.gif`, description: `gif ${i}` } },
-                ],
-              },
-            }],
-          }),
-        });
-      }
+      // Second call: seed word match query
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          responses: [{
+            hits: {
+              hits: [
+                { id: 'gif_1', source: { gif_url: 'https://example.com/1.gif', description: 'funny cat' } },
+                { id: 'gif_2', source: { gif_url: 'https://example.com/2.gif', description: 'happy dog' } },
+              ],
+              total: 2,
+            },
+          }],
+        }),
+      });
 
       const result = await getRandomGifs('honeycomb', 30);
 
-      // Should have called fetch multiple times (1 count + up to 5 batches)
-      expect(mockFetch).toHaveBeenCalled();
-      expect(result.total).toBe(100);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+
+      // Verify count query
+      const countCall = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(countCall.limit).toBe(1);
+
+      // Verify seed word query uses full_text_search match
+      const seedCall = JSON.parse(mockFetch.mock.calls[1][1].body);
+      expect(seedCall.full_text_search).toHaveProperty('match');
+      expect(seedCall.full_text_search).toHaveProperty('field', 'combined_text');
+      expect(seedCall.limit).toBe(40); // limit + 10 over-fetch
+
+      expect(result.results.length).toBeGreaterThan(0);
+      expect(result.total).toBe(106109); // Uses cached corpus total
+    });
+
+    it('should skip count query when total is cached', async () => {
+      store['honeycomb_gif_total'] = '106109';
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          responses: [{
+            hits: {
+              hits: [
+                { id: 'gif_1', source: { gif_url: 'https://example.com/1.gif', description: 'funny cat' } },
+              ],
+              total: 1,
+            },
+          }],
+        }),
+      });
+
+      const result = await getRandomGifs('honeycomb', 30);
+
+      // Only one fetch call — no count query needed
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(result.total).toBe(106109);
+    });
+
+    it('should retry with fallback word on empty results', async () => {
+      store['honeycomb_gif_total'] = '106109';
+
+      // First call: empty results from seed words
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          responses: [{ hits: { hits: [], total: 0 } }],
+        }),
+      });
+
+      // Second call: fallback word gets results
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          responses: [{
+            hits: {
+              hits: [
+                { id: 'gif_fb', source: { gif_url: 'https://example.com/fb.gif', description: 'fallback gif' } },
+              ],
+              total: 1,
+            },
+          }],
+        }),
+      });
+
+      const result = await getRandomGifs('honeycomb', 30);
+
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(result.results).toHaveLength(1);
+      expect(result.total).toBe(106109);
     });
   });
 });
