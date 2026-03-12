@@ -4,6 +4,7 @@ sources/*/media/
 # Descriptions can be regenerated
 sources/*/descriptions.jsonl
 ingest/*/output/descriptions-*.jsonl
+ingest/classify-moods/output/
 
 # Manifests track state - keep these if you want
 # sources/*/manifest.json
@@ -12,7 +13,7 @@ ingest/*/output/descriptions-*.jsonl
 sources/tgif/tgif-v1.0.tsv
 
 # Python cache
-pipeline/__pycache__/
+__pycache__/
 
 # Environment variables (credentials)
 .env

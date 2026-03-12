@@ -25,7 +25,7 @@ MEDIA_BASE_URL ?= https://media.honeycomb.antfly.io
 # Sources
 SOURCES_DIR := sources
 
-.PHONY: help setup scrape upload upload-all describe compare review ingest status web web-remote web-install web-build test lint clean test-prompt
+.PHONY: help setup scrape upload upload-all describe compare review ingest status web web-remote web-install web-build test lint clean test-prompt mood-test mood
 
 help:
 	@echo "GIF Picker - Available targets:"
@@ -41,6 +41,10 @@ help:
 	@echo "  review                 - Regenerate review.md from description files"
 	@echo "  ingest                 - Ingest latest describe output into Antfly"
 	@echo "  status                 - Show pipeline status for all sources"
+	@echo ""
+	@echo "  --- Mood Classification ---"
+	@echo "  mood-test              - Classify 50 moods for spot-checking"
+	@echo "  mood                   - Full pipeline: classify all moods + patch Antfly"
 	@echo ""
 	@echo "  --- Dev ---"
 	@echo "  test-prompt N=10       - Quick prompt iteration test (N GIFs from local TGIF)"
@@ -169,6 +173,23 @@ status:
 	@if [ ! -d "$(SOURCES_DIR)" ] || [ -z "$$(ls $(SOURCES_DIR)/*/manifest.json 2>/dev/null)" ]; then \
 		echo "  (no sources scraped yet)"; \
 	fi
+
+# ============================================================
+# Mood Classification
+# ============================================================
+
+MOOD_JSONL ?= ingest/image-to-text/output/descriptions-gemini-2.5-flash-lite.jsonl
+
+mood-test:
+	uv run ingest/classify-moods/classify.py --jsonl $(MOOD_JSONL) --batch-size 50 --limit 50
+
+mood: mood-classify mood-apply
+
+mood-classify:
+	uv run ingest/classify-moods/classify.py --jsonl $(MOOD_JSONL) --resume
+
+mood-apply:
+	uv run ingest/classify-moods/apply.py --jsonl $(MOOD_JSONL)
 
 # ============================================================
 # Web
