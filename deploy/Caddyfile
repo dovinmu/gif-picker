@@ -12,7 +12,7 @@
     encode gzip
 }
 
-honeycomb.rowan.earth {
+honeycomb.rowan.earth, honeycomb.antfly.io {
     handle /api/* {
         reverse_proxy localhost:8080
     }
