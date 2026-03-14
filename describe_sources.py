@@ -13,7 +13,7 @@ This is the source-agnostic counterpart of describe_gifs.py (which is TGIF-speci
 
 Usage:
     uv run describe_sources.py                          # All sources
-    uv run describe_sources.py --source kidmograph      # Single source
+    uv run describe_sources.py --source tgif             # Single source
     uv run describe_sources.py --limit 10 --workers 5   # Limited run
     uv run describe_sources.py --force                  # Re-describe all
 """
@@ -331,7 +331,7 @@ def main():
 
     sources = find_sources(args.source)
     if not sources:
-        print("No sources found. Run a scraper first (e.g., uv run sources/kidmograph/scrape.py)")
+        print("No sources found. Run a scraper first (e.g., uv run sources/tgif/scrape.py)")
         return
 
     print(f"Found {len(sources)} source(s): {', '.join(s.name for s in sources)}")

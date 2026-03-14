@@ -19,6 +19,7 @@ const HIDDEN_FIELDS = new Set([
   "combined_text",
   "_embeddings",
   "attribution",
+  "original_url",
   "mood_emoji",
 ]);
 
@@ -285,6 +286,19 @@ export function GifDetail({ gif, onClose, hasActiveSearch, onTagClick, onMoodCli
                 className="text-[hsl(var(--ring))] hover:underline"
               >
                 {gif.attribution}
+              </a>
+            </div>
+          )}
+          {gifData.original_url && typeof gifData.original_url === "string" && (
+            <div className="text-xs text-[hsl(var(--muted-foreground))]">
+              Original:{" "}
+              <a
+                href={gifData.original_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[hsl(var(--ring))] hover:underline"
+              >
+                {new URL(gifData.original_url).hostname}
               </a>
             </div>
           )}

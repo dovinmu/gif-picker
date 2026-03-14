@@ -19,7 +19,7 @@ Bucket path structure:
   sources/{source_name}/media/{item_id}.{ext}
 
 Usage:
-    uv run ingest/save-to-r2/upload_r2.py --source kidmograph
+    uv run ingest/save-to-r2/upload_r2.py --source tgif
     uv run ingest/save-to-r2/upload_r2.py --source tgif
     uv run ingest/save-to-r2/upload_r2.py --source tgif --workers 20
     uv run ingest/save-to-r2/upload_r2.py --all-sources
