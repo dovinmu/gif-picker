@@ -13,7 +13,7 @@ Creates a table with two vector indexes:
 
 Usage:
     uv run ingest/embed-text-descriptions/embed.py --jsonl gif_descriptions.jsonl --attribution "TGIF dataset"
-    uv run ingest/embed-text-descriptions/embed.py --source kidmograph
+    uv run ingest/embed-text-descriptions/embed.py --source tgif
     uv run ingest/embed-text-descriptions/embed.py --all-sources
     uv run ingest/embed-text-descriptions/embed.py --jsonl gif_descriptions.jsonl --limit 100
 """
