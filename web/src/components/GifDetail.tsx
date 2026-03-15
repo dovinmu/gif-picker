@@ -289,7 +289,7 @@ export function GifDetail({ gif, onClose, hasActiveSearch, onTagClick, onMoodCli
               </a>
             </div>
           )}
-          {gifData.original_url && typeof gifData.original_url === "string" && (
+          {typeof gifData.original_url === "string" && gifData.original_url && (
             <div className="text-xs text-[hsl(var(--muted-foreground))]">
               Original:{" "}
               <a
