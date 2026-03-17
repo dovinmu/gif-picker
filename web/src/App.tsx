@@ -19,6 +19,7 @@ function App() {
   const [showAbout, setShowAbout] = useState(false);
   const [totalGifs, setTotalGifs] = useState<number | null>(null);
   const [searchInput, setSearchInput] = useState('');
+  const [activeTag, setActiveTag] = useState<string | null>(null);
   const [selectedMood, setSelectedMood] = useState<MoodValue | null>(null);
   const [isDark, setIsDark] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -102,30 +103,45 @@ function App() {
     return () => abortController.abort();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Build the full query string from text input + active tag
+  const buildQuery = useCallback((text: string, tag: string | null) => {
+    const parts: string[] = [];
+    if (tag) {
+      const tagExpr = tag.includes(' ') ? `tag:"${tag}"` : `tag:${tag}`;
+      parts.push(tagExpr);
+    }
+    if (text.trim()) {
+      parts.push(text.trim());
+    }
+    return parts.join(' ');
+  }, []);
+
   const handleSearch = useCallback(async (query: string, moodOverride?: MoodValue | null) => {
     const mood = moodOverride !== undefined ? moodOverride : selectedMood;
-    if (query === lastQuery && mood === selectedMood && moodOverride === undefined) return;
+    const fullQuery = buildQuery(query, activeTag);
+    if (fullQuery === lastQuery && mood === selectedMood && moodOverride === undefined) return;
     setSearchInput(query);
     setIsLoading(true);
     setError(null);
 
     try {
-      const response = await searchGifs(query, TABLE_NAME, 20, mood ?? undefined);
+      const response = await searchGifs(fullQuery, TABLE_NAME, 20, mood ?? undefined);
       setGifs(response.results);
-      setLastQuery(query);
+      setLastQuery(fullQuery);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Search failed');
       console.error('Search error:', err);
     } finally {
       setIsLoading(false);
     }
-  }, [lastQuery, selectedMood]);
+  }, [lastQuery, selectedMood, activeTag, buildQuery]);
 
   const handleClearSearch = useCallback(async () => {
     setDeepLinkPending(false); // unlock URL sync if still pending from failed load
     setSearchKey(k => k + 1);
     setLastQuery('');
     setSearchInput('');
+    setActiveTag(null);
     setSelectedMood(null);
     setIsLoading(true);
     setError(null);
@@ -144,24 +160,22 @@ function App() {
     setSelectedMood(mood);
     setIsLoading(true);
     setError(null);
+    const fullQuery = buildQuery(searchInput, activeTag);
 
     try {
-      if (mood && searchInput) {
-        // Mood + text search: re-run search with mood filter
-        const response = await searchGifs(searchInput, TABLE_NAME, 20, mood);
+      if (mood && fullQuery) {
+        const response = await searchGifs(fullQuery, TABLE_NAME, 20, mood);
         setGifs(response.results);
-        setLastQuery(searchInput);
+        setLastQuery(fullQuery);
       } else if (mood) {
-        // Mood only: filter without text search
         const response = await getRandomGifs(TABLE_NAME, 30, mood);
         setGifs(response.results);
         setLastQuery('');
       } else {
-        // Mood deselected, no text: show random
-        if (searchInput) {
-          const response = await searchGifs(searchInput, TABLE_NAME, 20);
+        if (fullQuery) {
+          const response = await searchGifs(fullQuery, TABLE_NAME, 20);
           setGifs(response.results);
-          setLastQuery(searchInput);
+          setLastQuery(fullQuery);
         } else {
           const response = await getRandomGifs(TABLE_NAME, 30);
           setGifs(response.results);
@@ -174,26 +188,59 @@ function App() {
     } finally {
       setIsLoading(false);
     }
-  }, [searchInput]);
+  }, [searchInput, activeTag, buildQuery]);
 
-  // Handle tag click from GifDetail: append tag: prefix and search
+  // Handle tag click from GifDetail: replace any current tag and search
   const handleTagClick = useCallback(async (tag: string) => {
-    const tagExpr = tag.includes(' ') ? `tag:"${tag}"` : `tag:${tag}`;
-    const newQuery = (searchInput ? searchInput + ' ' : '') + tagExpr;
-    setSearchInput(newQuery);
+    setActiveTag(tag);
     setSelectedGif(null); // close detail
     setSearchKey(k => k + 1); // force SearchBox remount with new value
     setLastQuery(''); // reset so handleSearch doesn't skip
     setIsLoading(true);
     setError(null);
+    const fullQuery = buildQuery(searchInput, tag);
     try {
-      const response = await searchGifs(newQuery, TABLE_NAME, 20, selectedMood ?? undefined);
+      const response = await searchGifs(fullQuery, TABLE_NAME, 20, selectedMood ?? undefined);
       setGifs(response.results);
-      setLastQuery(newQuery);
+      setLastQuery(fullQuery);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Search failed');
     } finally {
       setIsLoading(false);
+    }
+  }, [searchInput, selectedMood, buildQuery]);
+
+  // Handle removing the active tag bubble
+  const handleRemoveTag = useCallback(async () => {
+    setActiveTag(null);
+    setLastQuery(''); // reset so next search fires
+    setSearchKey(k => k + 1);
+    if (searchInput.trim()) {
+      // Re-search with just the text query
+      setIsLoading(true);
+      setError(null);
+      try {
+        const response = await searchGifs(searchInput.trim(), TABLE_NAME, 20, selectedMood ?? undefined);
+        setGifs(response.results);
+        setLastQuery(searchInput.trim());
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Search failed');
+      } finally {
+        setIsLoading(false);
+      }
+    } else {
+      // No text either — show random
+      setIsLoading(true);
+      setError(null);
+      try {
+        const response = await getRandomGifs(TABLE_NAME, 30);
+        setGifs(response.results);
+        setTotalGifs(response.total);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load GIFs');
+      } finally {
+        setIsLoading(false);
+      }
     }
   }, [searchInput, selectedMood]);
 
@@ -260,7 +307,7 @@ function App() {
               )}
             </button>
           </div>
-          <SearchBox key={searchKey} onSearch={handleSearch} isLoading={isLoading} initialValue={searchInput} />
+          <SearchBox key={searchKey} onSearch={handleSearch} isLoading={isLoading} initialValue={searchInput} activeTag={activeTag} onRemoveTag={handleRemoveTag} />
           <MoodFilterBar selected={selectedMood} onSelect={handleMoodSelect} />
         </div>
       </header>

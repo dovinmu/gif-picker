@@ -196,9 +196,10 @@ export async function searchGifs(
     body.full_text_search = fts;
   }
 
-  // Only include semantic search when there are unquoted terms
-  if (looseText) {
-    body.semantic_search = looseText;
+  // Run semantic search on all text content (quoted + unquoted)
+  const semanticText = [looseText, ...phrases].filter(Boolean).join(' ');
+  if (semanticText) {
+    body.semantic_search = semanticText;
     body.indexes = ['embeddings'];
     if (fts) {
       body.merge_strategy = 'rrf';
