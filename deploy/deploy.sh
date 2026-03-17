@@ -1,13 +1,26 @@
 #!/usr/bin/env bash
-# Deploy frontend to production (honeycomb VM)
-# Usage: ./deploy/deploy_prod.sh
+# Deploy frontend to a Honeycomb VM
+# Usage: ./deploy/deploy.sh [dev|prod]
 
 set -euo pipefail
 
-VM=honeycomb
+TARGET="${1:?Usage: deploy.sh [dev|prod]}"
 ZONE=us-west1-c
 
-echo "=== Deploying to $VM ($ZONE) ==="
+case "$TARGET" in
+  dev)
+    VM=honeycomb-dev
+    ;;
+  prod)
+    VM=honeycomb
+    ;;
+  *)
+    echo "Unknown target: $TARGET (expected dev or prod)"
+    exit 1
+    ;;
+esac
+
+echo "=== Deploying to $VM ($TARGET, $ZONE) ==="
 
 echo "→ Pulling latest code on VM..."
 gcloud compute ssh "$VM" --zone="$ZONE" --command="cd ~/gif-picker && git pull"
@@ -24,4 +37,4 @@ gcloud compute ssh "$VM" --zone="$ZONE" --command="
   curl -sf -o /dev/null http://localhost:8080/api/v1/tables && echo 'api:    OK' || echo 'api:    FAIL'
 "
 
-echo "=== Deploy complete ==="
+echo "=== Deploy to $TARGET complete ==="

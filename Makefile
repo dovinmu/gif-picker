@@ -196,7 +196,7 @@ mood-apply:
 # ============================================================
 
 web: web-install
-	cd web && pnpm dev
+	cd web && pnpm dev $(ARGS)
 
 web-remote: web-install
 	cd web && REMOTE=1 pnpm dev
