@@ -60,7 +60,7 @@ export function AboutModal({ onClose }: AboutModalProps) {
           </h2>
 
           <p className="text-sm text-[hsl(var(--foreground))]">
-            Honeycomb is a semantic GIF search engine built as a demo for{" "}
+            Honeycomb is a semantic GIF search engine powered by{" "}
             <a
               href="https://antfly.io"
               className="underline hover:opacity-80"
@@ -69,8 +69,7 @@ export function AboutModal({ onClose }: AboutModalProps) {
             >
               Antfly
             </a>
-            , a vector database and search platform. It demonstrates multimodal search
-            over a large collection of animated GIFs.
+            . It indexes over 106,000 GIFs and lets you search them by meaning, not just keywords.
           </p>
 
           <div className="space-y-3">
@@ -91,7 +90,25 @@ export function AboutModal({ onClose }: AboutModalProps) {
                   >
                     TGIF dataset
                   </a>{" "}
-                  — 102,068 animated GIFs from Tumblr, each with a human-written caption.
+                  (~100k animated GIFs originally from Tumblr, created by{" "}
+                  <a
+                    href="https://arxiv.org/abs/1604.02748"
+                    className="underline hover:opacity-80"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Li et al
+                  </a>
+                  ) and the{" "}
+                  <a
+                    href="http://lucas.maystre.ch/gifgif-data"
+                    className="underline hover:opacity-80"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    MIT Media Lab GifGif
+                  </a>{" "}
+                  dataset (~6k GIFs with crowd-sourced emotion ratings).
                 </p>
               </div>
 
@@ -100,8 +117,8 @@ export function AboutModal({ onClose }: AboutModalProps) {
                 <p>
                   <strong>AI Descriptions:</strong> Multiple frames are extracted from each GIF
                   and sent to{" "}
-                  <strong>Gemini 2.0 Flash Lite</strong> to generate rich descriptions
-                  including mood, actions, use cases, tags, and source identification (movie, TV show, meme, etc.).
+                  <strong>Gemini 2.5 Flash Lite</strong> to generate rich structured descriptions
+                  including mood, tags, source identification, use cases, and content ratings.
                 </p>
               </div>
 
@@ -152,12 +169,23 @@ export function AboutModal({ onClose }: AboutModalProps) {
                 — Semantic + full-text search across all descriptions
               </p>
               <p>
+                <code className="px-1.5 py-0.5 rounded bg-[hsl(var(--muted))] text-xs font-mono">"spongebob squarepants"</code>{" "}
+                — Exact phrase match combined with semantic search
+              </p>
+              <p>
                 <code className="px-1.5 py-0.5 rounded bg-[hsl(var(--muted))] text-xs font-mono">tag:funny</code>{" "}
                 — Filter by exact tag
               </p>
               <p>
                 <code className="px-1.5 py-0.5 rounded bg-[hsl(var(--muted))] text-xs font-mono">dancing tag:celebration</code>{" "}
                 — Combine text search with tag filter
+              </p>
+              <p>
+                <code className="px-1.5 py-0.5 rounded bg-[hsl(var(--muted))] text-xs font-mono">corgi -tag:anime</code>{" "}
+                — Exclude results with a specific tag
+              </p>
+              <p>
+                Use the mood emoji bar to filter by emotional tone
               </p>
             </div>
           </div>
@@ -170,7 +198,7 @@ export function AboutModal({ onClose }: AboutModalProps) {
               {[
                 "Antfly",
                 "Termite",
-                "Gemini 2.0 Flash Lite",
+                "Gemini 2.5 Flash Lite",
                 "BAAI/bge-small-en-v1.5",
                 "React",
                 "TypeScript",
