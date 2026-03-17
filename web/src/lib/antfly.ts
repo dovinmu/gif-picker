@@ -189,17 +189,16 @@ export async function searchGifs(
   const body: Record<string, unknown> = { limit };
   const { phrases, looseText, tags, negativeTags, ratings } = parseQuery(query);
 
-  const fts = buildFullTextSearch(phrases, looseText);
+  const fts = buildFullTextSearch(phrases, '');
   const hasTextSearch = !!(fts || looseText);
 
   if (fts) {
     body.full_text_search = fts;
   }
 
-  // Run semantic search on all text content (quoted + unquoted)
-  const semanticText = [looseText, ...phrases].filter(Boolean).join(' ');
-  if (semanticText) {
-    body.semantic_search = semanticText;
+  // Only include semantic search when there are unquoted terms
+  if (looseText) {
+    body.semantic_search = looseText;
     body.indexes = ['embeddings'];
     if (fts) {
       body.merge_strategy = 'rrf';
