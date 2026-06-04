@@ -25,7 +25,7 @@ MEDIA_BASE_URL ?= https://media.honeycomb.antfly.io
 # Sources
 SOURCES_DIR := sources
 
-.PHONY: help setup scrape upload upload-all describe compare review ingest status web web-remote web-install web-build test lint clean test-prompt mood-test mood
+.PHONY: help setup scrape upload upload-all describe compare review ingest status cloud-migrate-help web web-remote web-install web-build test lint clean test-prompt mood-test mood
 
 help:
 	@echo "GIF Picker - Available targets:"
@@ -41,6 +41,7 @@ help:
 	@echo "  review                 - Regenerate review.md from description files"
 	@echo "  ingest                 - Ingest latest describe output into Antfly"
 	@echo "  status                 - Show pipeline status for all sources"
+	@echo "  cloud-migrate-help     - Show Antfly Cloud migration script options"
 	@echo ""
 	@echo "  --- Mood Classification ---"
 	@echo "  mood-test              - Classify 50 moods for spot-checking"
@@ -173,6 +174,10 @@ status:
 	@if [ ! -d "$(SOURCES_DIR)" ] || [ -z "$$(ls $(SOURCES_DIR)/*/manifest.json 2>/dev/null)" ]; then \
 		echo "  (no sources scraped yet)"; \
 	fi
+
+
+cloud-migrate-help:
+	uv run scripts/migrate_to_antfly_cloud.py --help
 
 # ============================================================
 # Mood Classification

@@ -66,3 +66,40 @@ Requires:
 ## Config
 
 Model pricing for cost tracking: `ingest/image-to-text/models.yaml`
+
+## Antfly Cloud lift-and-shift migration
+
+Use `scripts/migrate_to_antfly_cloud.py` to move this table to Antfly Cloud without re-running GIF description or embedding jobs. The script copies stored documents plus `_embeddings` through public Antfly APIs and creates the destination vector index as `external: true`.
+
+Recommended rehearsal:
+
+```bash
+# 1. Log in and choose a Cloud instance with the customer-facing CLI.
+antfly-cloud login
+antfly-cloud antfly env <instance>   # export the destination URL/token it prints
+
+# 2. Export/analyze locally only.
+uv run scripts/migrate_to_antfly_cloud.py \
+  --source-url http://localhost:8080/api/v1 \
+  --table honeycomb \
+  --export-path .migration/honeycomb.ndjson \
+  --dry-run
+
+# 3. Import into a scratch Cloud table.
+uv run scripts/migrate_to_antfly_cloud.py \
+  --source-url http://localhost:8080/api/v1 \
+  --dest-url "$ANTFLY_URL" \
+  --dest-bearer-token "$ANTFLY_TOKEN" \
+  --table honeycomb \
+  --dest-table honeycomb_migration_test \
+  --export-path .migration/honeycomb.ndjson \
+  --skip-export \
+  --yes
+```
+
+Notes:
+
+- This is a customer-grade path: no local data directory copying and no Antfly-internal Cloud admin hooks.
+- If the source API cannot project `_embeddings`, stop and add/fix a public export endpoint; do not fall back to re-embedding.
+- The migrated table preserves document vectors. Text semantic queries against an external index must supply query vectors through the `embeddings` query field or use a small query-embedding adapter.
+
