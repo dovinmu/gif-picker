@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import type { GifResult } from "../lib/antfly";
+import type { GifResult } from "../lib/types";
 
 interface GifCardProps {
   gif: GifResult;

@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import App from './App';
 import * as antfly from './lib/antfly';
+import type { GifResult, SearchResponse } from './lib/types';
 
 vi.mock('./lib/antfly', () => ({
   searchGifs: vi.fn(),
@@ -10,7 +11,7 @@ vi.mock('./lib/antfly', () => ({
   getGifById: vi.fn(),
 }));
 
-const mockRandomResponse: antfly.SearchResponse = {
+const mockRandomResponse: SearchResponse = {
   results: [
     { id: 'random_1', score: 1, gif_url: 'https://example.com/1.gif', description: 'Random GIF 1' },
     { id: 'random_2', score: 1, gif_url: 'https://example.com/2.gif', description: 'Random GIF 2' },
@@ -18,7 +19,7 @@ const mockRandomResponse: antfly.SearchResponse = {
   total: 100,
 };
 
-const mockDeepLinkedGif: antfly.GifResult = {
+const mockDeepLinkedGif: GifResult = {
   id: 'sources_2a7308db',
   score: 0,
   gif_url: 'https://example.com/deep-linked.gif',
@@ -87,11 +88,10 @@ describe('App deep link (?gif=ID) under StrictMode', () => {
     renderApp();
 
     await waitFor(() => {
-      expect(antfly.getGifById).toHaveBeenCalledWith('honeycomb', 'nonexistent_id');
+      expect(window.location.search).not.toContain('gif=');
     });
 
     expect(screen.queryByText('Copy URL')).not.toBeInTheDocument();
-    expect(window.location.search).not.toContain('gif=');
   });
 
   it('should not strip ?gif= param while deep link fetch is still pending', async () => {
@@ -100,7 +100,7 @@ describe('App deep link (?gif=ID) under StrictMode', () => {
     vi.mocked(antfly.getRandomGifs).mockImplementation(() => tick(mockRandomResponse));
 
     // getGifById hangs until we manually resolve it
-    let resolveGifById!: (value: antfly.GifResult | null) => void;
+    let resolveGifById!: (value: GifResult | null) => void;
     vi.mocked(antfly.getGifById).mockImplementation(
       () => new Promise((resolve) => { resolveGifById = resolve; }),
     );

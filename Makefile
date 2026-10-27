@@ -25,7 +25,7 @@ MEDIA_BASE_URL ?= https://media.honeycomb.antfly.io
 # Sources
 SOURCES_DIR := sources
 
-.PHONY: help setup scrape upload upload-all describe compare review ingest status web web-remote web-install web-build test lint clean test-prompt mood-test mood
+.PHONY: help setup scrape upload upload-all describe compare review ingest status web web-remote web-install web-build server serve test lint clean test-prompt mood-test mood
 
 help:
 	@echo "GIF Picker - Available targets:"
@@ -51,11 +51,13 @@ help:
 	@echo "  setup                  - Install pipeline dependencies (Playwright, etc.)"
 	@echo ""
 	@echo "  --- Web ---"
-	@echo "  web                    - Start the web development server (local Antfly)"
+	@echo "  web                    - Start Vite (run make server in a second terminal)"
 	@echo "  web-remote             - Start the web dev server (remote: honeycomb.rowan.earth)"
+	@echo "  server                 - Start the local application backend (Node 24)"
+	@echo "  serve                  - Serve the existing production build and API"
 	@echo "  web-install            - Install web dependencies"
 	@echo "  web-build              - Build web app for production"
-	@echo "  test                   - Run web tests"
+	@echo "  test                   - Run frontend/server tests and server typecheck"
 	@echo "  lint                   - Run linter"
 	@echo "  clean                  - Remove build artifacts"
 
@@ -202,13 +204,21 @@ web-remote: web-install
 	cd web && REMOTE=1 pnpm dev
 
 web-install:
-	cd web && pnpm install
+	cd web && pnpm install --frozen-lockfile
 
 web-build: web-install
 	cd web && pnpm build
 
+server:
+	cd web && pnpm server:dev
+
+serve:
+	cd web && pnpm server
+
 test:
 	cd web && pnpm test:run
+	cd web && pnpm server:test
+	cd web && pnpm server:typecheck
 
 lint:
 	cd web && pnpm lint

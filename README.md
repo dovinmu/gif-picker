@@ -43,13 +43,33 @@ Always reads from `descriptions-latest.jsonl`, which is symlinked by `make descr
 make ingest
 ```
 
+For an authenticated endpoint, set `ANTFLY_AUTHORIZATION` to the complete upstream
+Authorization header in a separate, secured ingestion environment. Use a
+write-capable ingestion credential, never the public backend's read credential.
+CR/LF is rejected and the credential is not printed. `--url` / `ANTFLY_URL` and
+`--table` / `INGEST_TABLE` retain their existing behavior.
+
 ### 5. Search
 
-Start the web UI:
+Use Node 24 and pnpm 10.11.0. Start the application backend and Vite in separate
+terminals (with Antfly running locally):
 
+```bash
+make web-install
+make server   # terminal 1: application API on localhost:8090
+make web      # terminal 2: Vite proxies /api to the application
 ```
-make web
-```
+
+For an existing production build, `make serve` serves both UI and API. Build it
+first with `make web-build`. `make web-remote` retains the remote application
+proxy option. `make test` runs frontend/server tests and backend typechecking.
+
+See [runtime and deployment documentation](deploy/README.md) for all environment
+variables, public API limits, container packaging and manual VM prerequisites.
+The browser no longer talks directly to Antfly. Public visitors need no login;
+upstream credentials and content policy belong to the server. These repository
+changes do not deploy the application, change the live Caddy configuration, or
+modify Colony or the database.
 
 ## Setup
 
@@ -62,6 +82,7 @@ Requires:
 - Antfly running (`antfly swarm`)
 - API keys in `~/.tokens/` (gemini_api_key, openrouter_api_key)
 - R2 credentials in `.env`
+- Node 24 and pnpm 10.11.0 for the application (no runtime npm dependencies)
 
 ## Config
 

@@ -3,14 +3,10 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
 const remote = process.env.REMOTE === '1'
-const apiTarget = remote ? 'https://honeycomb.rowan.earth' : 'http://localhost:8080'
-const nsfw = process.env.NSFW === '1'
+const apiTarget = remote ? 'https://honeycomb.rowan.earth' : 'http://localhost:8090'
 
 // https://vite.dev/config/
 export default defineConfig({
-  define: {
-    __NSFW_MODE__: JSON.stringify(nsfw),
-  },
   plugins: [react(), tailwindcss()],
   server: {
     proxy: {
@@ -18,13 +14,6 @@ export default defineConfig({
         target: apiTarget,
         changeOrigin: true,
       },
-      ...(!remote && {
-        '/termite': {
-          target: 'http://localhost:11434',
-          changeOrigin: true,
-          rewrite: (path: string) => path.replace(/^\/termite/, ''),
-        },
-      }),
     },
   },
 })

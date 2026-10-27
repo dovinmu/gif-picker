@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { GifDetail } from './GifDetail';
-import type { GifResult } from '../lib/antfly';
+import type { GifResult } from '../lib/types';
 
 const mockGif: GifResult = {
   id: 'test-gif-1',

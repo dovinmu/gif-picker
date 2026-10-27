@@ -4,9 +4,8 @@ import { GifGrid } from './components/GifGrid';
 import { GifDetail } from './components/GifDetail';
 import { AboutModal } from './components/AboutModal';
 import { MoodFilterBar, MOOD_EMOJIS, type MoodValue } from './components/MoodFilterBar';
-import { searchGifs, getRandomGifs, getGifById, type GifResult } from './lib/antfly';
-
-const TABLE_NAME = 'honeycomb';
+import { searchGifs, getRandomGifs, getGifById } from './lib/antfly';
+import type { GifResult } from './lib/types';
 
 function App() {
   const [gifs, setGifs] = useState<GifResult[]>([]);
@@ -62,7 +61,7 @@ function App() {
       setGifs([]);
       setLastQuery('');
       try {
-        const response = await getRandomGifs(TABLE_NAME);
+        const response = await getRandomGifs();
         if (abortController.signal.aborted) return;
         setGifs(response.results);
         setTotalGifs(response.total);
@@ -74,8 +73,8 @@ function App() {
           if (found) {
             setSelectedGif(found);
           } else {
-            // Fetch it directly from Antfly
-            const gif = await getGifById(TABLE_NAME, deepLinkGifId);
+            // Fetch it directly from the application API
+            const gif = await getGifById(deepLinkGifId);
             if (abortController.signal.aborted) return;
             if (gif) {
               setSelectedGif(gif);
@@ -125,7 +124,7 @@ function App() {
     setError(null);
 
     try {
-      const response = await searchGifs(fullQuery, TABLE_NAME, 20, mood ?? undefined);
+      const response = await searchGifs(fullQuery, 20, mood ?? undefined);
       setGifs(response.results);
       setLastQuery(fullQuery);
     } catch (err) {
@@ -146,7 +145,7 @@ function App() {
     setIsLoading(true);
     setError(null);
     try {
-      const response = await getRandomGifs(TABLE_NAME, 30);
+      const response = await getRandomGifs(30);
       setGifs(response.results);
       setTotalGifs(response.total);
     } catch (err) {
@@ -164,20 +163,20 @@ function App() {
 
     try {
       if (mood && fullQuery) {
-        const response = await searchGifs(fullQuery, TABLE_NAME, 20, mood);
+        const response = await searchGifs(fullQuery, 20, mood);
         setGifs(response.results);
         setLastQuery(fullQuery);
       } else if (mood) {
-        const response = await getRandomGifs(TABLE_NAME, 30, mood);
+        const response = await getRandomGifs(30, mood);
         setGifs(response.results);
         setLastQuery('');
       } else {
         if (fullQuery) {
-          const response = await searchGifs(fullQuery, TABLE_NAME, 20);
+          const response = await searchGifs(fullQuery, 20);
           setGifs(response.results);
           setLastQuery(fullQuery);
         } else {
-          const response = await getRandomGifs(TABLE_NAME, 30);
+          const response = await getRandomGifs(30);
           setGifs(response.results);
           setTotalGifs(response.total);
           setLastQuery('');
@@ -200,7 +199,7 @@ function App() {
     setError(null);
     const fullQuery = buildQuery(searchInput, tag);
     try {
-      const response = await searchGifs(fullQuery, TABLE_NAME, 20, selectedMood ?? undefined);
+      const response = await searchGifs(fullQuery, 20, selectedMood ?? undefined);
       setGifs(response.results);
       setLastQuery(fullQuery);
     } catch (err) {
@@ -220,7 +219,7 @@ function App() {
       setIsLoading(true);
       setError(null);
       try {
-        const response = await searchGifs(searchInput.trim(), TABLE_NAME, 20, selectedMood ?? undefined);
+        const response = await searchGifs(searchInput.trim(), 20, selectedMood ?? undefined);
         setGifs(response.results);
         setLastQuery(searchInput.trim());
       } catch (err) {
@@ -233,7 +232,7 @@ function App() {
       setIsLoading(true);
       setError(null);
       try {
-        const response = await getRandomGifs(TABLE_NAME, 30);
+        const response = await getRandomGifs(30);
         setGifs(response.results);
         setTotalGifs(response.total);
       } catch (err) {

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { GifGrid } from './GifGrid';
-import type { GifResult } from '../lib/antfly';
+import type { GifResult } from '../lib/types';
 
 const mockGifs: GifResult[] = [
   {

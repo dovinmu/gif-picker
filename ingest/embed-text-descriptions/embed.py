@@ -128,7 +128,7 @@ def create_table(client: httpx.Client, table: str, summarizer: bool = False) -> 
         print(f"Table '{table}' already exists, continuing...")
         return
     if not resp.is_success:
-        print(f"Create table failed ({resp.status_code}): {resp.text}")
+        print(f"Create table failed ({resp.status_code})")
     resp.raise_for_status()
     print(f"Created table '{table}'")
 
@@ -280,7 +280,12 @@ def main():
     if not any([args.jsonl, args.source, args.all_sources]):
         parser.error("Specify --jsonl PATH, --source NAME, or --all-sources")
 
-    client = httpx.Client(base_url=args.url, timeout=30.0)
+    authorization = os.environ.get("ANTFLY_AUTHORIZATION", "")
+    if "\r" in authorization or "\n" in authorization:
+        parser.error("ANTFLY_AUTHORIZATION must not contain CR or LF")
+    headers = {"Authorization": authorization} if authorization else {}
+
+    client = httpx.Client(base_url=args.url, timeout=30.0, headers=headers)
 
     # Create table (unless skipped or ingesting additional sources into existing table)
     if not args.skip_create:
