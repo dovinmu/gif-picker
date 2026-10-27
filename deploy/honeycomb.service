@@ -1,0 +1,19 @@
+[Unit]
+Description=Honeycomb GIF application
+After=network.target
+
+[Service]
+Type=simple
+User=rowan
+WorkingDirectory=/home/rowan/gif-picker/web
+ExecStart=/usr/bin/node /home/rowan/gif-picker/web/server/index.ts
+Environment=NODE_ENV=production
+Environment=PORT=8090
+EnvironmentFile=-/home/rowan/.config/honeycomb.env
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

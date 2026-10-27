@@ -1,0 +1,34 @@
+# Only application build inputs enter the context. Ingestion, media, database
+# state, repository history and deployment credentials are excluded by default.
+**
+!Dockerfile
+!.dockerignore
+!web/
+!web/package.json
+!web/pnpm-lock.yaml
+!web/index.html
+!web/tsconfig*.json
+!web/vite.config.ts
+!web/server/
+!web/server/**
+!web/src/
+!web/src/**
+!web/public/
+!web/public/**
+
+# Never include local credentials, dependencies or test fixtures, even within
+# an allowed application directory.
+**/.git
+**/.env*
+**/.tokens
+**/*token*
+**/*credential*
+**/*secret*
+**/*.pem
+**/*.key
+**/node_modules
+**/dist
+**/*.test.ts
+**/*.test.tsx
+**/test
+**/fixtures

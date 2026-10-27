@@ -1,4 +1,4 @@
-import type { GifResult } from "../lib/antfly";
+import type { GifResult } from "../lib/types";
 import { GifCard } from "./GifCard";
 
 interface GifGridProps {

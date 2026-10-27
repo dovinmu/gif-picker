@@ -1,5 +1,11 @@
 # Honeycomb GCP Deployment Plan
 
+Historical infrastructure notes, **not the current Honeycomb deployment procedure**.
+The frontend-only release, older Node version and public Antfly proxy described
+below are superseded by [the application runtime guide](README.md). Use that
+guide's Node 24 service, constrained API and manual deployment prerequisites.
+Database migration and VM provisioning still require separate authorization.
+
 VM: `honeycomb` (e2-standard-2, 8GB RAM, 30GB disk, Ubuntu 24.04)
 Zone: `us-west1-c` (default zone)
 IP: `34.169.80.70`

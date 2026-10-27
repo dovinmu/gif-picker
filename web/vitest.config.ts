@@ -2,9 +2,6 @@ import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig({
-  define: {
-    __NSFW_MODE__: JSON.stringify(false),
-  },
   plugins: [react()],
   test: {
     environment: 'jsdom',

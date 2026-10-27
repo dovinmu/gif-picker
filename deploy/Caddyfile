@@ -1,27 +1,11 @@
 :80 {
-    handle /api/* {
-        reverse_proxy localhost:8080
-    }
-
-    handle {
-        root * /var/www/honeycomb
-        try_files {path} /index.html
-        file_server
-    }
+    reverse_proxy localhost:8090
 
     encode gzip
 }
 
 honeycomb.rowan.earth, honeycomb.antfly.io {
-    handle /api/* {
-        reverse_proxy localhost:8080
-    }
-
-    handle {
-        root * /var/www/honeycomb
-        try_files {path} /index.html
-        file_server
-    }
+    reverse_proxy localhost:8090
 
     encode gzip
 
@@ -32,20 +16,3 @@ honeycomb.rowan.earth, honeycomb.antfly.io {
     }
 }
 
-admin.honeycomb.rowan.earth {
-    @notAcme not path /.well-known/acme-challenge/*
-    basic_auth @notAcme {
-        # caddy hash-password --plaintext <password>
-        adminaf $2a$14$REPLACE_WITH_HASH
-    }
-
-    reverse_proxy localhost:8080
-
-    encode gzip
-
-    header {
-        X-Content-Type-Options nosniff
-        X-Frame-Options DENY
-        Referrer-Policy strict-origin-when-cross-origin
-    }
-}

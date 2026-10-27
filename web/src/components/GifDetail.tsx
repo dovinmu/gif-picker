@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import type { GifResult } from "../lib/antfly";
+import type { GifResult } from "../lib/types";
 import { MOOD_EMOJIS, type MoodValue } from "./MoodFilterBar";
 
 interface GifDetailProps {

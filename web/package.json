@@ -3,7 +3,12 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "packageManager": "pnpm@10.11.0",
   "scripts": {
+    "server": "node server/index.ts",
+    "server:dev": "node --watch server/index.ts",
+    "server:test": "node --test server/*.test.ts",
+    "server:typecheck": "tsc -p tsconfig.server.json",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",

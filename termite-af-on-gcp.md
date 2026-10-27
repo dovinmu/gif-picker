@@ -1,5 +1,12 @@
 # Antfly & Termite on GCE
 
+These are historical infrastructure/inference notes, not the current Honeycomb
+application release procedure. For Honeycomb, use the
+[application runtime guide](deploy/README.md): Node 24 serves both UI and the
+constrained API; do not apply this document's public Antfly proxy or
+frontend-only deployment instructions. Provisioning or migrating a database
+requires separate authorization.
+
 Guide for deploying Antfly (vector database) and Termite (ML inference) on Google Compute Engine. Covers both production serving (antfly + embedded termite for search) and batch inference (standalone termite with generative models). Written from hard-won experience deploying the Honeycomb GIF picker.
 
 > **User-specific items** are marked with `<!-- CUSTOMIZE -->` throughout this document. Search for that tag to find everything you need to change for your own deployment.
