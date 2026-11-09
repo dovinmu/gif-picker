@@ -11,16 +11,18 @@ First does a dry-run count, then asks for confirmation before deleting.
 Usage:
     uv run scripts/delete_by_prefix.py km_
     uv run scripts/delete_by_prefix.py km_ --table honeycomb
-    uv run scripts/delete_by_prefix.py km_ --url http://remote:8080/api/v1
+    uv run scripts/delete_by_prefix.py km_ --url http://remote:8080/db/v1
+    ANTFLY_API_KEY=... uv run scripts/delete_by_prefix.py km_ --url https://platform.antfly.io/cloud/v1/<instance-id>/db/v1
     uv run scripts/delete_by_prefix.py km_ --yes  # skip confirmation
 """
 
 import argparse
+import os
 import sys
 
 import httpx
 
-DEFAULT_URL = "http://localhost:8080/api/v1"
+DEFAULT_URL = os.environ.get("ANTFLY_URL", "http://localhost:8080/db/v1")
 DEFAULT_TABLE = "honeycomb"
 SCAN_LIMIT = 500
 DELETE_BATCH_SIZE = 100
@@ -50,10 +52,10 @@ def find_ids_by_prefix(client: httpx.Client, table: str, prefix: str) -> list[st
                 matched.append(doc_id)
 
         offset += len(hits)
-        total = data.get("responses", [{}])[0].get("hits", {}).get("total", 0)
-        print(f"\r  Scanned {offset}/{total} documents, found {len(matched)} matching '{prefix}'", end="", flush=True)
+        print(f"\r  Scanned {offset} documents, found {len(matched)} matching '{prefix}'", end="", flush=True)
 
-        if offset >= total:
+        # hits.total is only a lower bound, so a short page marks the end
+        if len(hits) < SCAN_LIMIT:
             break
 
     print()
@@ -86,7 +88,9 @@ def main():
     parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
     args = parser.parse_args()
 
-    client = httpx.Client(base_url=args.url, timeout=30.0)
+    api_key = os.environ.get("ANTFLY_API_KEY", "")
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    client = httpx.Client(base_url=args.url, headers=headers, timeout=30.0)
 
     print(f"Scanning table '{args.table}' for IDs starting with '{args.prefix}'...")
     ids = find_ids_by_prefix(client, args.table, args.prefix)

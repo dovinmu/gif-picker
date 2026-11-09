@@ -33,8 +33,9 @@ gcloud compute ssh "$VM" --zone="$ZONE" --command="sudo cp -r ~/gif-picker/web/d
 
 echo "→ Verifying..."
 gcloud compute ssh "$VM" --zone="$ZONE" --command="
-  systemctl is-active antfly && echo 'antfly: OK' || echo 'antfly: DOWN'
-  curl -sf -o /dev/null http://localhost:8080/api/v1/tables && echo 'api:    OK' || echo 'api:    FAIL'
+  systemctl is-active caddy && echo 'caddy: OK' || echo 'caddy: DOWN'
+  curl -sf -o /dev/null -X POST -H 'Content-Type: application/json' -d '{\"limit\":1}' \
+    http://localhost/db/v1/tables/honeycomb/query && echo 'query: OK' || echo 'query: FAIL'
 "
 
 echo "=== Deploy to $TARGET complete ==="

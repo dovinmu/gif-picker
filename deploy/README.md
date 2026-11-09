@@ -70,6 +70,21 @@ sudo cp -r web/dist/* /var/www/honeycomb/
 
 ## 5. Configure Caddy
 
+Caddy serves the frontend and forwards the one API call Honeycomb makes
+(`POST /db/v1/tables/honeycomb/query`) to Antfly Cloud, adding the API key.
+Give Caddy the instance ID and a key that can query the `honeycomb` table:
+
+```bash
+sudo systemctl edit caddy
+# [Service]
+# Environment=ANTFLY_CLOUD_INSTANCE=<instance-id>
+# Environment=ANTFLY_API_KEY=<key>
+```
+
+Use a key with explicit grants (read on `honeycomb`) and no expiry: Colony
+revokes instance keys without explicit grants, and expiring keys, when its
+key migrations 136/137 run.
+
 ```bash
 # Edit Caddyfile - replace domain
 sudo cp Caddyfile /etc/caddy/Caddyfile
@@ -138,7 +153,12 @@ journalctl -u caddy -f
 ### Test API directly
 
 ```bash
-curl http://localhost:8080/api/v1/tables
+# Through Caddy (what the browser uses)
+curl -X POST -H 'Content-Type: application/json' -d '{"limit":1}' \
+  http://localhost/db/v1/tables/honeycomb/query
+
+# A local Antfly v0.3 serves its data API under /db/v1
+curl http://localhost:8080/db/v1/tables
 ```
 
 ### Test termite directly
