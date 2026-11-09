@@ -26,7 +26,8 @@ import httpx
 
 load_dotenv()
 
-ANTFLY_URL = os.environ.get("ANTFLY_URL", "http://localhost:8080/api/v1")
+ANTFLY_URL = os.environ.get("ANTFLY_URL", "http://localhost:8080/db/v1")
+ANTFLY_API_KEY = os.environ.get("ANTFLY_API_KEY", "")
 TABLE_NAME = os.environ.get("INGEST_TABLE", "honeycomb")
 BATCH_SIZE = 200
 
@@ -86,7 +87,8 @@ def main():
         print(f"  {total:,} docs: {matched:,} mapped, {fallback:,} would use fallback, {no_mood:,} no mood")
         return
 
-    client = httpx.Client(base_url=args.url, timeout=30.0)
+    headers = {"Authorization": f"Bearer {ANTFLY_API_KEY}"} if ANTFLY_API_KEY else {}
+    client = httpx.Client(base_url=args.url, headers=headers, timeout=30.0)
 
     batch: list = []
     updated = 0

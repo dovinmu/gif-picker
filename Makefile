@@ -1,15 +1,17 @@
 # GIF Picker Makefile
 #
-# Prerequisites:
-#   - Antfly running: antfly swarm
-#   - Text embedding model: antflycli termite pull BAAI/bge-small-en-v1.5 --type embedder
+# Prerequisites (Antfly v0.3, /db/v1 API):
+#   - Local: antfly standalone, with the embedding model available
+#     (antfly inference pull google/embeddinggemma-2)
+#   - Antfly Cloud: set ANTFLY_URL=https://platform.antfly.io/cloud/v1/<instance-id>/db/v1
+#     and ANTFLY_API_KEY in .env (web-cloud also needs ANTFLY_CLOUD_INSTANCE)
 
 # Load .env file if it exists
 -include .env
 export
 
 # Antfly API URL
-ANTFLY_URL ?= http://localhost:8080/api/v1
+ANTFLY_URL ?= http://localhost:8080/db/v1
 
 # Ingest settings
 INGEST_BATCH_SIZE ?= 50
@@ -25,7 +27,7 @@ MEDIA_BASE_URL ?= https://media.honeycomb.antfly.io
 # Sources
 SOURCES_DIR := sources
 
-.PHONY: help setup scrape upload upload-all describe compare review ingest status web web-remote web-install web-build test lint clean test-prompt mood-test mood
+.PHONY: help setup scrape upload upload-all describe compare review ingest status web web-remote web-cloud web-install web-build test lint clean test-prompt mood-test mood
 
 help:
 	@echo "GIF Picker - Available targets:"
@@ -53,6 +55,7 @@ help:
 	@echo "  --- Web ---"
 	@echo "  web                    - Start the web development server (local Antfly)"
 	@echo "  web-remote             - Start the web dev server (remote: honeycomb.rowan.earth)"
+	@echo "  web-cloud              - Start the web dev server against an Antfly Cloud instance"
 	@echo "  web-install            - Install web dependencies"
 	@echo "  web-build              - Build web app for production"
 	@echo "  test                   - Run web tests"
@@ -200,6 +203,10 @@ web: web-install
 
 web-remote: web-install
 	cd web && REMOTE=1 pnpm dev
+
+web-cloud: web-install
+	@test -n "$(ANTFLY_CLOUD_INSTANCE)" || (echo "Set ANTFLY_CLOUD_INSTANCE (and ANTFLY_API_KEY) in .env" && exit 1)
+	cd web && pnpm dev $(ARGS)
 
 web-install:
 	cd web && pnpm install

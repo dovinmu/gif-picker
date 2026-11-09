@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { searchGifs, getGifById } from './antfly';
+import { searchGifs, getGifById, getRandomGifs } from './antfly';
 
 // Mock fetch globally
 const mockFetch = vi.fn();
@@ -60,7 +60,7 @@ describe('Antfly API Client', () => {
 
       // Verify the request
       expect(mockFetch).toHaveBeenCalledWith(
-        '/api/v1/tables/honeycomb/query',
+        '/db/v1/tables/honeycomb/query',
         expect.objectContaining({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -178,10 +178,90 @@ describe('Antfly API Client', () => {
 
       expect(result.results).toHaveLength(0);
     });
+
+    it('should read an object hits.total', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          responses: [{ hits: { hits: [], total: { value: 42, relation: 'gte' } } }],
+        }),
+      });
+
+      const result = await searchGifs('test', TEXT_TABLE);
+      expect(result.total).toBe(42);
+    });
+
+    it('should fuse phrase and semantic search with merge_config', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ responses: [{ hits: { hits: [] } }] }),
+      });
+
+      await searchGifs('"dog" excited', TEXT_TABLE);
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.full_text_search).toEqual({ match_phrase: 'dog', field: 'combined_text' });
+      expect(body.semantic_search).toBe('excited');
+      expect(body.indexes).toEqual(['embeddings']);
+      expect(body.merge_config).toEqual({ strategy: 'rrf' });
+      expect(body).not.toHaveProperty('merge_strategy');
+    });
+
+    it('should build a structured exclusion query', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ responses: [{ hits: { hits: [] } }] }),
+      });
+
+      await searchGifs('cats -tag:"live leak"', TEXT_TABLE);
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.exclusion_query).toEqual({
+        disjuncts: [
+          { match: 'porn', field: 'tags' },
+          { match: 'sexual', field: 'tags' },
+          { match: 'nsfw', field: 'tags' },
+          { match_phrase: 'adult content', field: 'tags' },
+          { match_phrase: 'live leak', field: 'tags' },
+          { term: 'x', field: 'rating' },
+        ],
+      });
+    });
+  });
+
+  describe('getRandomGifs', () => {
+    beforeEach(() => {
+      mockLocalStorage.clear();
+    });
+
+    it('should count once and cache the exact total', async () => {
+      mockFetch.mockImplementation((_url: string, init: { body: string }) => {
+        const body = JSON.parse(init.body);
+        const hits = body.count
+          ? { total: { value: 1234, relation: 'exact' } }
+          : { hits: [{ _id: 'g1', _source: { gif_url: 'u' } }], total: { value: 30, relation: 'gte' } };
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ responses: [{ hits }] }) });
+      });
+
+      const first = await getRandomGifs(TEXT_TABLE, 30);
+      expect(first.total).toBe(1234);
+      expect(first.results.map(r => r.id)).toEqual(['g1']);
+      const firstBodies = mockFetch.mock.calls.map(c => JSON.parse(c[1].body));
+      expect(firstBodies.filter(b => b.count)).toHaveLength(1);
+      expect(firstBodies.find(b => !b.count).offset).toBe(0);
+
+      mockFetch.mockClear();
+      const second = await getRandomGifs(TEXT_TABLE, 30);
+      expect(second.total).toBe(1234);
+      const secondBodies = mockFetch.mock.calls.map(c => JSON.parse(c[1].body));
+      expect(secondBodies.filter(b => b.count)).toHaveLength(0);
+      expect(secondBodies[0].offset).toBeGreaterThanOrEqual(0);
+      expect(secondBodies[0].offset).toBeLessThan(1234);
+    });
   });
 
   describe('getGifById', () => {
-    it('should query by _id and return the GIF', async () => {
+    it('should look up the GIF with an ids query', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({
@@ -203,11 +283,11 @@ describe('Antfly API Client', () => {
       const result = await getGifById(TEXT_TABLE, 'sources_abc123');
 
       expect(mockFetch).toHaveBeenCalledWith(
-        '/api/v1/tables/honeycomb/query',
+        '/db/v1/tables/honeycomb/query',
         expect.objectContaining({
           method: 'POST',
           body: JSON.stringify({
-            full_text_search: { term: 'sources_abc123', field: '_id' },
+            full_text_search: { ids: ['sources_abc123'] },
             limit: 1,
           }),
         }),

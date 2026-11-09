@@ -1,6 +1,8 @@
 // Antfly API client for GIF search
 
-const API_BASE = '/api/v1';
+// Antfly serves its data API under /db/v1. In dev, Vite proxies this path;
+// in production, Caddy proxies it (to a local Antfly or to Antfly Cloud).
+const API_BASE = '/db/v1';
 
 declare const __NSFW_MODE__: boolean;
 
@@ -38,15 +40,36 @@ export interface SearchResponse {
   total: number;
 }
 
+// Antfly reports hits.total as {value, relation}; older servers sent a number.
+// relation "gte" means value is only a lower bound.
+interface HitsTotal {
+  value: number;
+  exact: boolean;
+}
+
+function readTotal(raw: unknown): HitsTotal | undefined {
+  if (typeof raw === 'number') return { value: raw, exact: true };
+  if (raw && typeof raw === 'object') {
+    const { value, relation } = raw as { value?: unknown; relation?: unknown };
+    if (typeof value === 'number') return { value, exact: relation !== 'gte' };
+  }
+  return undefined;
+}
+
+function postQuery(tableName: string, body: Record<string, unknown>): Promise<Response> {
+  return fetch(`${API_BASE}/tables/${tableName}/query`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
 export async function getGifById(tableName: string, id: string): Promise<GifResult | null> {
   try {
-    const response = await fetch(`${API_BASE}/tables/${tableName}/query`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        full_text_search: { term: id, field: '_id' },
-        limit: 1,
-      }),
+    // `term` on `_id` matches nothing; Antfly looks up document keys with an ids query.
+    const response = await postQuery(tableName, {
+      full_text_search: { ids: [id] },
+      limit: 1,
     });
     if (!response.ok) return null;
     const data = await response.json();
@@ -156,28 +179,35 @@ function buildFullTextSearch(phrases: string[], looseText: string): Record<strin
   return { conjuncts: parts };
 }
 
-// Build exclusion_query from negative tags, blocked tags, and blocked ratings
+// Clause matching a value in an analyzed field. The analyzer splits on hyphens
+// and spaces (e.g. "adult-content" → ["adult","content"], "PG-13" → ["pg","13"])
+// and stems ("animal" is indexed as "anim"), so values go through match /
+// match_phrase rather than an unanalyzed term query. Results are post-filtered
+// for exact tag/rating equality below.
+function fieldValueClause(field: string, value: string): Record<string, unknown> {
+  const analyzedForm = value.replace(/-/g, ' ');
+  return analyzedForm.includes(' ')
+    ? { match_phrase: analyzedForm, field }
+    : { match: analyzedForm, field };
+}
+
+// Build exclusion_query from negative tags, blocked tags, and blocked ratings.
+// Ratings are single letters ("x"), so a term query matches them exactly.
+// Antfly v0.3 rejects (422) an exclusion that mixes analyzed clauses with a
+// clause on a field that no document in the table has; Honeycomb tables
+// always carry rating, so this only bites on tables loaded without it.
 function buildExclusionQuery(negativeTags: string[]): Record<string, unknown> | undefined {
-  const parts: string[] = [];
+  const parts: Record<string, unknown>[] = [];
 
-  // Add globally blocked tags
-  for (const tag of BLOCKED_TAGS) {
-    parts.push(`tags:"${tag}"`);
+  for (const tag of [...BLOCKED_TAGS, ...negativeTags]) {
+    parts.push(fieldValueClause('tags', tag));
   }
-
-  // Add globally blocked ratings
   for (const rating of BLOCKED_RATINGS) {
-    parts.push(`rating:"${rating}"`);
-  }
-
-  // Add user's negative tags
-  for (const tag of negativeTags) {
-    // Quote values to handle multi-word tags like "Live Leak"
-    parts.push(`tags:"${tag}"`);
+    parts.push({ term: rating, field: 'rating' });
   }
 
   if (parts.length === 0) return undefined;
-  return { query: parts.join(' OR ') };
+  return { disjuncts: parts };
 }
 
 export async function searchGifs(
@@ -201,38 +231,19 @@ export async function searchGifs(
     body.semantic_search = looseText;
     body.indexes = ['embeddings'];
     if (fts) {
-      body.merge_strategy = 'rrf';
+      body.merge_config = { strategy: 'rrf' };
     }
   }
 
   // Build structured filter queries from tag: and rating: prefixes
-  const filterParts: Record<string, unknown>[] = [];
-
-  // tag: filters — use match_phrase for compound tags since Bleve tokenizes
-  // on hyphens and spaces (e.g. "adult-content" → ["adult","content"])
-  for (const t of tags) {
-    const bleveForm = t.replace(/-/g, ' ');
-    filterParts.push(
-      bleveForm.includes(' ')
-        ? { match_phrase: bleveForm, field: 'tags' }
-        : { term: bleveForm, field: 'tags' }
-    );
-  }
-
-  // rating: filters — use match_phrase with hyphens converted to spaces
-  // since Bleve tokenizes "PG-13" as ["pg","13"]
-  for (const r of ratings) {
-    const bleveForm = r.replace(/-/g, ' ');
-    filterParts.push(
-      bleveForm.includes(' ')
-        ? { match_phrase: bleveForm, field: 'rating' }
-        : { term: bleveForm, field: 'rating' }
-    );
-  }
+  const filterParts: Record<string, unknown>[] = [
+    ...tags.map(t => fieldValueClause('tags', t)),
+    ...ratings.map(r => fieldValueClause('rating', r)),
+  ];
 
   // Mood emoji filter
   if (moodFilter) {
-    filterParts.push({ term: moodFilter, field: 'mood_emoji' });
+    filterParts.push(fieldValueClause('mood_emoji', moodFilter));
   }
 
   if (filterParts.length > 0) {
@@ -252,13 +263,7 @@ export async function searchGifs(
     body.exclusion_query = exclusion;
   }
 
-  const response = await fetch(`${API_BASE}/tables/${tableName}/query`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
+  const response = await postQuery(tableName, body);
 
   if (!response.ok) {
     throw new Error(`Search failed: ${response.statusText}`);
@@ -317,11 +322,48 @@ export async function searchGifs(
 
   return {
     results: filtered,
-    total: firstResponse?.hits?.total ?? filtered.length,
+    total: readTotal(firstResponse?.hits?.total)?.value ?? filtered.length,
   };
 }
 
-const TOTAL_CACHE_KEY = 'honeycomb_gif_total';
+const TOTAL_CACHE_KEY = 'honeycomb_gif_total_v2';
+const TOTAL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+function readCachedTotal(): number | undefined {
+  try {
+    const cached = JSON.parse(localStorage.getItem(TOTAL_CACHE_KEY) ?? 'null');
+    if (typeof cached?.total === 'number' && Date.now() - cached.at < TOTAL_CACHE_TTL_MS) {
+      return cached.total;
+    }
+  } catch {
+    // Missing or unreadable cache: count again.
+  }
+  return undefined;
+}
+
+function writeCachedTotal(total: number): void {
+  try {
+    localStorage.setItem(TOTAL_CACHE_KEY, JSON.stringify({ total, at: Date.now() }));
+  } catch {
+    // Storage unavailable: the count is simply not cached.
+  }
+}
+
+// Browse responses only report a lower-bound total, so the exact number of
+// visible GIFs comes from a separate count-only query, cached per browser.
+async function countGifs(tableName: string, exclusion: Record<string, unknown> | undefined): Promise<number | undefined> {
+  try {
+    const body: Record<string, unknown> = { count: true };
+    if (exclusion) body.exclusion_query = exclusion;
+    const resp = await postQuery(tableName, body);
+    if (!resp.ok) return undefined;
+    const data = await resp.json();
+    const total = readTotal(data.responses?.[0]?.hits?.total);
+    return total?.exact ? total.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 // Max offset for random GIF loading — Bleve implements offset as a linear
 // scan, so large values (e.g. 30k on 106k records) take ~29s and pin a CPU
@@ -336,53 +378,35 @@ export async function getRandomGifs(tableName: string, limit: number = 30, moodF
 
   const exclusion = buildExclusionQuery([]);
 
-  // Use cached total from localStorage to pick a random offset (0 on first visit)
-  const cachedTotal = parseInt(localStorage.getItem(TOTAL_CACHE_KEY) ?? '0', 10);
-  const maxOffset = Math.min(cachedTotal > limit ? cachedTotal - limit : 0, MAX_RANDOM_OFFSET);
+  // Pick a random offset from the cached total (offset 0 when nothing is cached).
+  // Without a cached total, count in parallel so the next visit can randomize.
+  const cachedTotal = readCachedTotal();
+  const countPromise = cachedTotal === undefined ? countGifs(tableName, exclusion) : Promise.resolve(undefined);
+  const knownTotal = cachedTotal ?? 0;
+  const maxOffset = Math.min(knownTotal > limit ? knownTotal - limit : 0, MAX_RANDOM_OFFSET);
   const randomOffset = maxOffset > 0 ? Math.floor(Math.random() * maxOffset) : 0;
 
-  const body: Record<string, unknown> = { limit, offset: randomOffset };
-  if (exclusion) body.exclusion_query = exclusion;
+  const browse = async (offset: number) => {
+    const body: Record<string, unknown> = { limit, offset };
+    if (exclusion) body.exclusion_query = exclusion;
+    const resp = await postQuery(tableName, body);
+    if (!resp.ok) throw new Error(`Failed to load GIFs: ${resp.statusText}`);
+    const data = await resp.json();
+    return data.responses?.[0]?.hits ?? {};
+  };
 
-  const resp = await fetch(`${API_BASE}/tables/${tableName}/query`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!resp.ok) throw new Error(`Failed to load GIFs: ${resp.statusText}`);
-
-  const data = await resp.json();
-  const firstResponse = data.responses?.[0];
-  const total = firstResponse?.hits?.total ?? 0;
-  const hits = firstResponse?.hits?.hits ?? [];
-
-  // Cache total for future offset calculations and footer display
-  if (total > 0) {
-    localStorage.setItem(TOTAL_CACHE_KEY, String(total));
+  let page = await browse(randomOffset);
+  // If a stale cached total made the offset overshoot (0 results), retry once at offset 0
+  if ((page.hits ?? []).length === 0 && randomOffset > 0) {
+    page = await browse(0);
   }
 
-  // If stale cache caused offset to overshoot (0 results), retry once at offset 0
-  if (hits.length === 0 && randomOffset > 0) {
-    const retryBody: Record<string, unknown> = { limit, offset: 0 };
-    if (exclusion) retryBody.exclusion_query = exclusion;
+  const counted = await countPromise;
+  if (counted !== undefined) writeCachedTotal(counted);
+  const pageTotal = readTotal(page.total);
+  const total = cachedTotal ?? counted ?? (pageTotal?.exact ? pageTotal.value : 0);
 
-    const retryResp = await fetch(`${API_BASE}/tables/${tableName}/query`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(retryBody),
-    });
-    if (!retryResp.ok) throw new Error(`Failed to load GIFs: ${retryResp.statusText}`);
-
-    const retryData = await retryResp.json();
-    const retryFirst = retryData.responses?.[0];
-    const retryTotal = retryFirst?.hits?.total ?? 0;
-    if (retryTotal > 0) {
-      localStorage.setItem(TOTAL_CACHE_KEY, String(retryTotal));
-    }
-    return buildRandomResponse(retryFirst?.hits?.hits ?? [], retryTotal, limit);
-  }
-
-  return buildRandomResponse(hits, total, limit);
+  return buildRandomResponse(page.hits ?? [], total, limit);
 }
 
 function buildRandomResponse(hits: any[], total: number, limit: number): SearchResponse {
