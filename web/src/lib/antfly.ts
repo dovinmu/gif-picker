@@ -266,7 +266,7 @@ export async function searchGifs(
   const response = await postQuery(tableName, body);
 
   if (!response.ok) {
-    throw new Error(`Search failed: ${response.statusText}`);
+    throw new Error(`Search failed (HTTP ${response.status})`);
   }
 
   const data = await response.json();
@@ -390,7 +390,7 @@ export async function getRandomGifs(tableName: string, limit: number = 30, moodF
     const body: Record<string, unknown> = { limit, offset };
     if (exclusion) body.exclusion_query = exclusion;
     const resp = await postQuery(tableName, body);
-    if (!resp.ok) throw new Error(`Failed to load GIFs: ${resp.statusText}`);
+    if (!resp.ok) throw new Error(`Couldn't load GIFs (HTTP ${resp.status})`);
     const data = await resp.json();
     return data.responses?.[0]?.hits ?? {};
   };

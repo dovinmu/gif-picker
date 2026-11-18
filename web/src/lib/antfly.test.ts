@@ -162,10 +162,11 @@ describe('Antfly API Client', () => {
     it('should throw error on API failure', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: false,
+        status: 500,
         statusText: 'Internal Server Error',
       });
 
-      await expect(searchGifs('test', TEXT_TABLE)).rejects.toThrow('Search failed: Internal Server Error');
+      await expect(searchGifs('test', TEXT_TABLE)).rejects.toThrow('Search failed (HTTP 500)');
     });
 
     it('should handle malformed response', async () => {
