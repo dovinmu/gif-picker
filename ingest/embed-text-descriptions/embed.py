@@ -7,9 +7,13 @@
 Ingest GIF descriptions into Antfly via the HTTP API.
 
 Replaces ingest/ingest_text.go — uses httpx directly instead of the Go SDK.
-Creates a table with two vector indexes:
-  - embeddings: embeds combined_text via termite (BGE-small)
-  - summarizer_embeddings: Antfly fetches the GIF, summarizes via Gemini, embeds result
+Creates a table with one embeddings index:
+  - embeddings: Antfly embeds combined_text with EMBED_MODEL (default
+    google/embeddinggemma-2) through its configured inference service
+
+Targets the Antfly v0.3 data API (/db/v1). For Antfly Cloud, set
+ANTFLY_URL=https://platform.antfly.io/cloud/v1/<instance-id>/db/v1 and
+ANTFLY_API_KEY=<key>.
 
 Usage:
     uv run ingest/embed-text-descriptions/embed.py --jsonl gif_descriptions.jsonl --attribution "TGIF dataset"
@@ -32,11 +36,11 @@ import httpx
 load_dotenv()
 
 # Config
-ANTFLY_URL = os.environ.get("ANTFLY_URL", "http://localhost:8080/api/v1")
+ANTFLY_URL = os.environ.get("ANTFLY_URL", "http://localhost:8080/db/v1")
+ANTFLY_API_KEY = os.environ.get("ANTFLY_API_KEY", "")
 TABLE_NAME = os.environ.get("INGEST_TABLE", "honeycomb")
 BATCH_SIZE = 50
-EMBED_MODEL = "BAAI/bge-small-en-v1.5"
-EMBED_DIMENSION = 384
+EMBED_MODEL = os.environ.get("EMBED_MODEL", "google/embeddinggemma-2")
 SOURCES_DIR = Path(__file__).parent.parent.parent / "sources"
 
 
@@ -78,48 +82,24 @@ def doc_id(desc: dict) -> str:
     return f"gif_{h}"
 
 
-def create_table(client: httpx.Client, table: str, summarizer: bool = False) -> None:
-    """Create Antfly table with vector indexes.
+def create_table(client: httpx.Client, table: str) -> None:
+    """Create the Antfly table with its embeddings index.
 
-    Args:
-        summarizer: If True, add a summarizer index that uses Gemini to generate
-            descriptions from GIF media at query time. Requires a valid GEMINI_API_KEY
-            on the Antfly server.
+    Antfly embeds combined_text itself (backfill on insert); the index
+    dimension comes from the model, so none is given here.
     """
     indexes = {
         "embeddings": {
-            "type": "aknn_v0",
-            "dimension": EMBED_DIMENSION,
+            "type": "embeddings",
             "field": "combined_text",
             "embedder": {
-                "provider": "termite",
+                "provider": "antfly",
                 "model": EMBED_MODEL,
             },
         },
     }
 
-    if summarizer:
-        indexes["summarizer_embeddings"] = {
-            "type": "aknn_v0",
-            "dimension": EMBED_DIMENSION,
-            "template": (
-                "{{media url=gif_url}}\n\n"
-                "Describe what is happening in this animated image in detail. "
-                "Include the emotional mood, key actions, where it might be from, "
-                "and when someone might use it in conversation."
-            ),
-            "embedder": {
-                "provider": "termite",
-                "model": EMBED_MODEL,
-            },
-            "summarizer": {
-                "provider": "gemini",
-                "model": "gemini-2.0-flash-lite",
-            },
-        }
-
-    label = "text + summarizer" if summarizer else "text embedding"
-    print(f"Creating table '{table}' with {label} indexes (dim={EMBED_DIMENSION})...")
+    print(f"Creating table '{table}' with embeddings index (model={EMBED_MODEL})...")
 
     body = {"indexes": indexes}
 
@@ -274,17 +254,17 @@ def main():
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE, help=f"Batch size (default: {BATCH_SIZE})")
     parser.add_argument("--r2-urls", help="Path to R2 URL mapping JSON (from upload_r2.py)")
     parser.add_argument("--media-base-url", default="", help="Base URL for media (e.g., /media or https://cdn.example.com)")
-    parser.add_argument("--summarizer", action="store_true", help="Add Gemini summarizer index (requires GEMINI_API_KEY on Antfly server)")
     args = parser.parse_args()
 
     if not any([args.jsonl, args.source, args.all_sources]):
         parser.error("Specify --jsonl PATH, --source NAME, or --all-sources")
 
-    client = httpx.Client(base_url=args.url, timeout=30.0)
+    headers = {"Authorization": f"Bearer {ANTFLY_API_KEY}"} if ANTFLY_API_KEY else {}
+    client = httpx.Client(base_url=args.url, headers=headers, timeout=30.0)
 
     # Create table (unless skipped or ingesting additional sources into existing table)
     if not args.skip_create:
-        create_table(client, args.table, summarizer=args.summarizer)
+        create_table(client, args.table)
 
     # Load R2 URL mapping if provided
     r2_urls = None

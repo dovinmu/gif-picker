@@ -1,7 +1,45 @@
-:80 {
-    handle /api/* {
-        reverse_proxy localhost:8080
+# Honeycomb only ever POSTs queries to one table. Proxy exactly that call to
+# Antfly Cloud and add the API key here, so the browser never sees it and no
+# other Antfly endpoint is reachable from the public site.
+# Needs ANTFLY_CLOUD_INSTANCE and ANTFLY_API_KEY in Caddy's environment
+# (see README.md, "Configure Caddy").
+(antfly_query) {
+    @honeycomb_query {
+        method POST
+        path /db/v1/tables/honeycomb/query
     }
+    handle @honeycomb_query {
+        request_body {
+            max_size 64KB
+        }
+        rewrite * /cloud/v1/{env.ANTFLY_CLOUD_INSTANCE}/db/v1/tables/honeycomb/query
+        reverse_proxy https://platform.antfly.io {
+            header_up Host platform.antfly.io
+            header_up Authorization "Bearer {env.ANTFLY_API_KEY}"
+            header_up -Cookie
+            # Antfly Cloud treats any request with Origin as browser traffic and
+            # rejects it when browser access is off. This is a server-side call.
+            header_up -Origin
+            header_up -Referer
+            # Open a fresh upstream connection per request (Cloudflare drops idle
+            # ones); queries are read-only, so retry them on connection errors.
+            lb_retries 2
+            lb_try_duration 10s
+            lb_retry_match {
+                method POST
+            }
+            transport http {
+                keepalive off
+            }
+        }
+    }
+    handle /db/v1/* {
+        respond "Forbidden" 403
+    }
+}
+
+:80 {
+    import antfly_query
 
     handle {
         root * /var/www/honeycomb
@@ -13,9 +51,7 @@
 }
 
 honeycomb.rowan.earth, honeycomb.antfly.io {
-    handle /api/* {
-        reverse_proxy localhost:8080
-    }
+    import antfly_query
 
     handle {
         root * /var/www/honeycomb

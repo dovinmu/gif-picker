@@ -317,34 +317,19 @@ function App() {
         {error ? (
           <div className="text-center py-12">
             <p className="text-red-500 mb-2">{error}</p>
-            <p className="text-[hsl(var(--muted-foreground))] text-sm">
-              Make sure Antfly is running: <code className="bg-[hsl(var(--muted))] px-2 py-1 rounded">antfly swarm</code>
+            <p className="text-[hsl(var(--muted-foreground))] text-sm mb-4">
+              The search service didn't respond properly. This is usually temporary.
             </p>
+            <button
+              onClick={() => (searchInput || activeTag || selectedMood ? handleSearch(searchInput, selectedMood) : handleClearSearch())}
+              className="px-4 py-2 rounded-lg bg-[hsl(var(--muted))] text-[hsl(var(--foreground))] hover:opacity-80"
+            >
+              Try again
+            </button>
           </div>
         ) : initialLoadDone && gifs.length === 0 && !lastQuery && !selectedMood ? (
           <div className="text-center py-12">
-            <h2 className="text-xl font-semibold text-[hsl(var(--foreground))] mb-4">
-              No GIFs loaded yet
-            </h2>
-            <p className="text-[hsl(var(--muted-foreground))] mb-4">
-              You need to import the TGIF dataset first:
-            </p>
-            <div className="bg-[hsl(var(--muted))] rounded-lg p-4 max-w-xl mx-auto text-left">
-              <pre className="text-sm overflow-x-auto">
-{`# 1. Make sure Antfly is running
-antfly swarm
-
-# 2. Import the dataset (from gif-picker/ingest)
-cd ingest
-go run main.go -tsv /path/to/TGIF-Release/data/tgif-v1.0.tsv
-
-# For a quick test, limit to 1000 GIFs:
-go run main.go -tsv /path/to/TGIF-Release/data/tgif-v1.0.tsv -limit 1000`}
-              </pre>
-            </div>
-            <p className="text-[hsl(var(--muted-foreground))] mt-4 text-sm">
-              Check the browser console for debugging info.
-            </p>
+            <p className="text-[hsl(var(--muted-foreground))]">No GIFs to show right now. Try a search.</p>
           </div>
         ) : (
           <>
